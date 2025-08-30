@@ -1,18 +1,60 @@
-# node
-node_modules
-dist
-# python
-__pycache__/
+# Dependencies
+node_modules/
+*/node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
 *.pyc
-.venv
-# env
+__pycache__/
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Environment files
+.env
 .env.local
 .env.development
 .env.production
-# terraform
+.env.test
+
+# Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+.pytest_cache/
+
+# Terraform
 .terraform/
 *.tfstate
 *.tfstate.*
 terraform.tfvars
-# docker
+.terraform.lock.hcl
+
+# Docker
 *.log
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Firebase
+.firebase/
+.firebaserc
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
