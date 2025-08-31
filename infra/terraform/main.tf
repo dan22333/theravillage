@@ -135,6 +135,12 @@ resource "google_cloud_run_service" "api" {
           value = "2025-08-30-12"
         }
 
+        # Set environment to production
+        env {
+          name  = "ENVIRONMENT"
+          value = "production"
+        }
+
         ports { container_port = 8080 }
 
         # Secrets → env vars (Cloud Run v1 schema: value_from.name/key)

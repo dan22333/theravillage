@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -23,8 +23,8 @@ try:
     # Get Firebase credentials from environment or Secret Manager
     firebase_creds_json = os.getenv("FIREBASE_ADMIN_JSON")
     
-    if not firebase_creds_json and os.getenv("ENVIRONMENT") == "development":
-        # For local development, try to get from Secret Manager
+    if not firebase_creds_json:
+        # Try to get from Secret Manager (for production or local development)
         try:
             import google.cloud.secretmanager as secretmanager
             client = secretmanager.SecretManagerServiceClient()
@@ -54,7 +54,7 @@ app = FastAPI(
 
 # Security middleware to log all requests
 @app.middleware("http")
-async def security_middleware(request: Request, call_next):
+async def security_middleware(request, call_next):
     """Log all requests for security monitoring"""
     request_id = str(uuid.uuid4())
     start_time = datetime.utcnow()
@@ -130,8 +130,6 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "xtheravillage-api"}
 
-
-
 @app.post("/users/register")
 async def register_user(
     request: UserRegistrationRequest,
@@ -148,10 +146,16 @@ async def register_user(
             )
         
         # Verify the Firebase token
-        decoded_token = auth.verify_id_token(token)
-        firebase_uid = decoded_token["uid"]
-        email = decoded_token.get("email", "")
-        name = decoded_token.get("name", "")
+        try:
+            decoded_token = auth.verify_id_token(token)
+            firebase_uid = decoded_token["uid"]
+            email = decoded_token.get("email", "")
+            name = decoded_token.get("name", "")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid Firebase token: {str(e)}"
+            )
         
         # Check if user already exists
         result = await db.execute(
@@ -199,10 +203,7 @@ async def register_user(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ User registration error: {e}")
-        print(f"❌ Error type: {type(e)}")
-        import traceback
-        print(f"❌ Traceback: {traceback.format_exc()}")
+        print(f"User registration error: {e}")
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

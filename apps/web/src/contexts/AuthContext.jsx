@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { auth, googleProvider } from '../firebase';
+import { initializeFirebase } from '../firebase';
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 
 const AuthContext = createContext();
@@ -23,20 +23,35 @@ export const AuthProvider = ({ children }) => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isRegistered, setIsRegistered] = useState(false);
+  const [auth, setAuth] = useState(null);
+  const [googleProvider, setGoogleProvider] = useState(null);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      if (user) {
-        await checkUserRegistration(user);
-      } else {
-        setIsAdmin(false);
-        setIsRegistered(false);
-      }
-      setLoading(false);
-    });
+    const initAuth = async () => {
+      try {
+        const { auth: authInstance, googleProvider: provider } = await initializeFirebase();
+        setAuth(authInstance);
+        setGoogleProvider(provider);
 
-    return unsubscribe;
+        const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
+          setUser(user);
+          if (user) {
+            await checkUserRegistration(user);
+          } else {
+            setIsAdmin(false);
+            setIsRegistered(false);
+          }
+          setLoading(false);
+        });
+
+        return unsubscribe;
+      } catch (error) {
+        console.error('Failed to initialize Firebase:', error);
+        setLoading(false);
+      }
+    };
+
+    initAuth();
   }, []);
 
   const checkUserRegistration = async (user) => {
@@ -72,6 +87,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const signInWithGoogle = async () => {
+    if (!auth || !googleProvider) {
+      throw new Error('Firebase not initialized');
+    }
+
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
@@ -121,6 +140,11 @@ export const AuthProvider = ({ children }) => {
   };
 
   const signOutUser = async () => {
+    if (!auth) {
+      console.error('Firebase not initialized');
+      return;
+    }
+
     try {
       await signOut(auth);
     } catch (error) {
