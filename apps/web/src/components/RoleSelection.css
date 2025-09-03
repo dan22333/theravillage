@@ -1,0 +1,118 @@
+/* Role Selection Styles */
+.client-note {
+  font-size: var(--font-size-sm);
+  color: var(--gray);
+  margin: var(--spacing-sm) 0 0 0;
+  font-style: italic;
+}
+
+.role-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.role-option {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background-color: var(--white);
+  border: 2px solid #E2E8F0;
+  border-radius: var(--border-radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.role-option:hover {
+  border-color: var(--primary-color);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.role-option.selected {
+  border-color: var(--primary-color);
+  background-color: var(--primary-color);
+  color: var(--white);
+  box-shadow: var(--shadow-md);
+}
+
+.role-option.selected .role-content h3,
+.role-option.selected .role-content p {
+  color: var(--white);
+}
+
+.role-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  background: linear-gradient(135deg, var(--primary-color), var(--primary-light));
+  border-radius: var(--border-radius-full);
+  color: var(--white);
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+
+.role-option.selected .role-icon {
+  background: var(--white);
+  color: var(--primary-color);
+}
+
+.role-content {
+  flex: 1;
+}
+
+.role-content h3 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--dark-gray);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.role-content p {
+  font-size: var(--font-size-base);
+  color: var(--gray);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .role-options {
+    gap: var(--spacing-sm);
+  }
+  
+  .role-option {
+    padding: var(--spacing-md);
+    gap: var(--spacing-sm);
+  }
+  
+  .role-icon {
+    width: 48px;
+    height: 48px;
+  }
+  
+  .role-content h3 {
+    font-size: var(--font-size-base);
+  }
+  
+  .role-content p {
+    font-size: var(--font-size-sm);
+  }
+}
+
+@media (max-width: 480px) {
+  .role-option {
+    flex-direction: column;
+    text-align: center;
+    gap: var(--spacing-sm);
+  }
+  
+  .role-icon {
+    width: 56px;
+    height: 56px;
+  }
+}

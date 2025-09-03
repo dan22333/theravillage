@@ -12,7 +12,9 @@ help:
 	@echo ""
 	@echo "  make up          - Start all services"
 	@echo "  make down        - Stop all services"
+	@echo "  make close       - Stop services and kill common dev ports"
 	@echo "  make build       - Build/rebuild all services"
+
 	@echo "  make logs        - Show logs from all services"
 	@echo "  make api-logs    - Show API service logs"
 	@echo "  make postgres-logs - Show database logs"
@@ -56,9 +58,30 @@ up-logs:
 down:
 	docker-compose --env-file env.local down
 
+# Close local dev: stop containers and kill common dev ports
+close:
+	@echo "🛑 Closing local dev services and ports..."
+	- docker-compose --env-file env.local down -v --remove-orphans
+	@echo "🔪 Killing processes on ports 5173 (Vite), 8083 (API), 8001 (AI) if any..."
+	- @for port in 5173 8083 8001; do \
+		if lsof -ti :$$port >/dev/null 2>&1; then \
+			kill -9 `lsof -ti :$$port`; \
+			echo "Killed process on port $$port"; \
+		fi; \
+	done
+	@echo "✅ Local environment closed."
+
 # Build/rebuild all services
 build:
 	docker-compose --env-file env.local build --no-cache
+
+# Build AI service only
+build-ai:
+	docker-compose --env-file env.local build --no-cache tv-ai
+
+# Build API service only
+build-api:
+	docker-compose --env-file env.local build --no-cache tv-api
 
 # Show logs from all services
 logs:
@@ -66,11 +89,11 @@ logs:
 
 # Show API service logs
 api-logs:
-	docker-compose --env-file env.local logs -f api
+	docker-compose --env-file env.local logs -f tv-api
 
 # Show database logs
 postgres-logs:
-	docker-compose --env-file env.local logs -f postgres
+	docker-compose --env-file env.local logs -f tv-postgres
 
 # Clean up everything
 clean:
@@ -81,19 +104,46 @@ clean:
 db-reset:
 	docker-compose --env-file env.local down -v
 	docker volume rm theravillage_postgres_data || true
-	docker-compose --env-file env.local up -d postgres
+	docker-compose --env-file env.local up -d tv-postgres
 
 # Run API tests
 test:
-	docker-compose --env-file env.local exec api poetry run pytest
+	docker-compose --env-file env.local exec tv-api poetry run pytest
+
+# Database migrations
+migrate:
+	docker-compose --env-file env.local exec tv-api python migrate_db.py migrate
+
+migrate-rollback:
+	docker-compose --env-file env.local exec tv-api python migrate_db.py rollback $(migration_name)
+
+# Production migrations (Cloud Run)
+migrate-prod:
+	gcloud run jobs create migrate-db-$$(date +%Y%m%d-%H%M%S) \
+		--image us-central1-docker.pkg.dev/theravillage-edb89/tv/api:latest \
+		--command="python,migrate_db.py,migrate" \
+		--region=us-central1 \
+		--set-env-vars="ENVIRONMENT=production" \
+		--max-retries=3 \
+		--task-timeout=300s
+
+# Create new migration file
+migration-create:
+	@read -p "Enter migration name: " name; \
+	cd services/api/migrations && \
+	echo "-- Migration: $$name" > "$$(date +%Y%m%d_%H%M%S)_$$name.sql" && \
+	echo "-- Date: $$(date +%Y-%m-%d)" >> "$$(date +%Y%m%d_%H%M%S)_$$name.sql" && \
+	echo "-- Description: " >> "$$(date +%Y%m%d_%H%M%S)_$$name.sql" && \
+	echo "" >> "$$(date +%Y%m%d_%H%M%S)_$$name.sql" && \
+	echo "✅ Created migration: $$(date +%Y%m%d_%H%M%S)_$$name.sql"
 
 # Access database shell
 db-shell:
-	docker-compose --env-file env.local exec postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+	docker-compose --env-file env.local exec tv-postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB}
 
 # Access API shell
 api-shell:
-	docker-compose --env-file env.local exec api bash
+	docker-compose --env-file env.local exec tv-api bash
 
 # Check service status
 status:
@@ -101,7 +151,7 @@ status:
 
 # Restart API service
 restart-api:
-	docker-compose --env-file env.local restart api
+	docker-compose --env-file env.local restart tv-api
 
 # View API health
 health:
@@ -109,4 +159,4 @@ health:
 
 # View database info
 db-info:
-	docker-compose --env-file env.local exec postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\l"
+	docker-compose --env-file env.local exec tv-postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c "\l"

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import './UserActions.css';
 
-const UserActions = ({ user, onUserAction, currentUserUid }) => {
+const UserActions = ({ user, onUserAction, onDeleteUser, currentUserUid }) => {
   const [loading, setLoading] = useState(false);
   const [showConfirm, setShowConfirm] = useState('');
 
@@ -21,12 +21,28 @@ const UserActions = ({ user, onUserAction, currentUserUid }) => {
     }
   };
 
+  const handleDelete = async () => {
+    if (showConfirm === 'delete') {
+      // User confirmed the deletion
+      setLoading(true);
+      try {
+        await onDeleteUser(user.id, user.name);
+        setShowConfirm('');
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      // Show confirmation first
+      setShowConfirm('delete');
+    }
+  };
+
   const cancelAction = () => {
     setShowConfirm('');
   };
 
   const getActionButton = (action, label, icon, variant = 'secondary') => {
-    const isCurrentUser = user.firebase_uid === currentUserUid;
+    const isCurrentUser = user.id === currentUserUid;
     const isDisabled = loading || (action === 'demote' && isCurrentUser);
     
     return (
@@ -72,24 +88,34 @@ const UserActions = ({ user, onUserAction, currentUserUid }) => {
       {!showConfirm && (
         <div className="action-buttons">
           {/* Promote to Admin */}
-          {!user.is_admin && (
+          {user.role !== 'admin' && (
             getActionButton('promote', 'Promote', '👑', 'primary')
           )}
           
           {/* Demote from Admin */}
-          {user.is_admin && (
+          {user.role === 'admin' && (
             getActionButton('demote', 'Demote', '👤', 'warning')
           )}
           
           {/* Revoke User */}
-          {!user.disabled && (
+          {user.status === 'active' && (
             getActionButton('revoke', 'Revoke', '🚫', 'danger')
           )}
           
           {/* Enable User */}
-          {user.disabled && (
+          {user.status !== 'active' && (
             getActionButton('enable', 'Enable', '✅', 'success')
           )}
+          
+          {/* Delete User */}
+          <button
+            className="action-btn danger"
+            onClick={handleDelete}
+            disabled={loading}
+            title="Delete user and all related data"
+          >
+            🗑️ Delete
+          </button>
         </div>
       )}
 
@@ -108,6 +134,26 @@ const UserActions = ({ user, onUserAction, currentUserUid }) => {
       
       {showConfirm === 'enable' && (
         getConfirmButton('enable', 'Enable Access', '✅', 'success')
+      )}
+      
+      {showConfirm === 'delete' && (
+        <div className="confirm-actions">
+          <span className="confirm-text">Confirm delete?</span>
+          <button
+            className="action-btn danger"
+            onClick={handleDelete}
+            disabled={loading}
+          >
+            🗑️ Yes, Delete
+          </button>
+          <button
+            className="action-btn secondary"
+            onClick={cancelAction}
+            disabled={loading}
+          >
+            ❌ Cancel
+          </button>
+        </div>
       )}
 
       {/* Loading State */}

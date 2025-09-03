@@ -1,60 +1,68 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
+  tv-postgres:
+    image: postgres:16
     container_name: tv-postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "5433:5432"
+    env_file:
+      - env.local
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - tv-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U tv_admin -d theravillage"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - tv-network
 
-  # TheraVillage API
-  api:
+  # Main API Service
+  tv-api:
     build:
       context: ./services/api
       dockerfile: Dockerfile.dev
     container_name: tv-api
     ports:
-      - "${API_PORT}:8080"
-    environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - PORT=8080
-      - ENVIRONMENT=${ENVIRONMENT}
-      - LOG_LEVEL=${LOG_LEVEL}
-      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
-      - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - "8083:8080"
+    env_file:
+      - env.local
     volumes:
       - ./services/api:/app
-      - /app/__pycache__
-      - /app/.venv
-      - /app/node_modules
+      - ~/.config/gcloud:/root/.config/gcloud:ro
+    depends_on:
+      tv-postgres:
+        condition: service_healthy
+      tv-ai:
+        condition: service_started
+    networks:
+      - tv-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+
+  # AI Service for AI Recommendations
+  tv-ai:
+    build:
+      context: ./services/ai
+      dockerfile: Dockerfile
+    container_name: tv-ai
+    ports:
+      - "8001:8000"
+    env_file:
+      - env.local
+    volumes:
+      - ./services/ai:/app
       - ~/.config/gcloud:/root/.config/gcloud:ro
     networks:
       - tv-network
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
-    driver: local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 networks:
   tv-network:
     driver: bridge
+
+volumes:
+  postgres_data:

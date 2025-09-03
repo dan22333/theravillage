@@ -1,0 +1,20 @@
+{
+  "name": "theravillage-cloud-functions",
+  "version": "1.0.0",
+  "description": "Google Cloud Functions for TheraVillage",
+  "main": "index.js",
+  "scripts": {
+    "deploy": "gcloud functions deploy",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.0.0",
+    "nodemailer": "^6.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0"
+  },
+  "engines": {
+    "node": "18"
+  }
+}

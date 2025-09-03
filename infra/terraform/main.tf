@@ -83,6 +83,42 @@ resource "google_secret_manager_secret" "firebase_admin_json" {
   }
 }
 
+# Email credentials for Cloud Functions
+resource "google_secret_manager_secret" "email_user" {
+  secret_id = "EMAIL_USER"
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret" "email_password" {
+  secret_id = "EMAIL_PASSWORD"
+  replication {
+    auto {}
+  }
+}
+
+# AI Service secrets
+resource "google_secret_manager_secret" "openai_api_key" {
+  secret_id = "OPENAI_API_KEY"
+  replication {
+    user_managed {
+      replicas { location = var.region }
+    }
+  }
+}
+
+resource "google_secret_manager_secret" "pinecone_api_key" {
+  secret_id = "PINECONE_API_KEY"
+  replication {
+    user_managed {
+      replicas { location = var.region }
+    }
+  }
+}
+
+
+
 ####################################
 # 5) IAM bindings for runtime SA
 ####################################
@@ -106,6 +142,23 @@ resource "google_project_iam_member" "sa_firebase_admin" {
   role    = "roles/firebase.admin"
   member  = "serviceAccount:${google_service_account.api_sa.email}"
 }
+
+####################################
+# 5.5) Service Account for Cloud Functions
+####################################
+resource "google_service_account" "functions_sa" {
+  account_id   = "tv-functions-sa"
+  display_name = "TheraVillage Cloud Functions SA"
+}
+
+# Allow Cloud Functions to access secrets
+resource "google_project_iam_member" "functions_secret_access" {
+  project = var.project
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.functions_sa.email}"
+}
+
+# Note: Gmail sending is done via SMTP, not Gmail API, so no special IAM needed
 
 ####################################
 # 6) Cloud Run Service for Backend API
@@ -132,13 +185,25 @@ resource "google_cloud_run_service" "api" {
         # Optional: nudge a new revision when needed
         env {
           name  = "DEPLOYMENT_TIMESTAMP"
-          value = "2025-08-30-12"
+          value = "2025-09-01-23"
         }
 
         # Set environment to production
         env {
           name  = "ENVIRONMENT"
           value = "production"
+        }
+
+        # Set CORS allowed origins for production
+        env {
+          name  = "CORS_ALLOWED_ORIGINS"
+          value = var.cors_allowed_origins
+        }
+
+        # Set frontend URL for invite links
+        env {
+          name  = "FRONTEND_URL"
+          value = var.frontend_url
         }
 
         ports { container_port = 8080 }
@@ -163,6 +228,9 @@ resource "google_cloud_run_service" "api" {
             }
           }
         }
+
+
+
       }
     }
   }
@@ -178,12 +246,102 @@ resource "google_cloud_run_service" "api" {
     google_project_iam_member.sa_sql_client,
     google_project_iam_member.sa_firebase_admin,
     google_secret_manager_secret.db_url,
-    google_secret_manager_secret.firebase_admin_json
+    google_secret_manager_secret.firebase_admin_json,
+    google_secret_manager_secret.email_user,
+    google_secret_manager_secret.email_password
   ]
 }
 
 ####################################
-# 7) Cloud Run IAM - Allow unauthenticated access (for now)
+# 7) Cloud Run Service for AI Service
+####################################
+resource "google_cloud_run_service" "ai" {
+  name     = "tv-ai"
+  location = var.region
+
+  template {
+    spec {
+      service_account_name = google_service_account.api_sa.email
+
+      containers {
+        # Use Artifact Registry image URL
+        image = "${var.region}-docker.pkg.dev/${var.project}/${var.artifact_repo}/ai:latest"
+
+        # Set environment to production
+        env {
+          name  = "ENVIRONMENT"
+          value = "production"
+        }
+
+        # AI Service configuration
+        env {
+          name  = "MODEL_NAME"
+          value = "gpt-4o-mini"
+        }
+
+        env {
+          name  = "MAX_TOKENS"
+          value = "3000"
+        }
+
+        env {
+          name  = "TEMPERATURE"
+          value = "0.7"
+        }
+
+        env {
+          name  = "PINECONE_ENVIRONMENT"
+          value = "us-central1-gcp"
+        }
+
+        env {
+          name  = "PINECONE_INDEX_NAME"
+          value = "theravillage-exercises"
+        }
+
+        ports { container_port = 8000 }
+
+        # AI Service secrets from Secret Manager
+        env {
+          name = "OPENAI_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.openai_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "PINECONE_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.pinecone_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+      }
+    }
+  }
+
+  traffic {
+    percent         = 100
+    latest_revision = true
+  }
+
+  depends_on = [
+    google_project_iam_member.sa_artifact_reader,
+    google_project_iam_member.sa_secret_access,
+    google_project_iam_member.api_ai_invoker,
+    google_secret_manager_secret.openai_api_key,
+    google_secret_manager_secret.pinecone_api_key
+  ]
+}
+
+####################################
+# 8) Cloud Run IAM - Security Configuration
 ####################################
 resource "google_cloud_run_service_iam_member" "public_access" {
   location = google_cloud_run_service.api.location
@@ -192,8 +350,102 @@ resource "google_cloud_run_service_iam_member" "public_access" {
   member   = "allUsers"
 }
 
+# AI Service - Private access (only API service can invoke)
+resource "google_cloud_run_service_iam_member" "ai_private_access" {
+  location = google_cloud_run_service.ai.location
+  service  = google_cloud_run_service.ai.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.api_sa.email}"
+}
+
+# Allow API service to invoke AI service
+resource "google_project_iam_member" "api_ai_invoker" {
+  project = var.project
+  role    = "roles/run.invoker"
+  member  = "serviceAccount:${google_service_account.api_sa.email}"
+}
+
 ####################################
-# 8) Outputs
+# 8) Cloud Functions
+####################################
+# Enable Cloud Functions API
+resource "google_project_service" "cloudfunctions" {
+  project = var.project
+  service = "cloudfunctions.googleapis.com"
+}
+
+# Cloud Function for sending client invitations
+resource "google_cloudfunctions2_function" "send_client_invitation" {
+  name        = "sendClientInvitation"
+  location    = var.region
+  description = "Sends email invitations to clients"
+
+  build_config {
+    runtime     = "nodejs18"
+    entry_point = "sendClientInvitation"
+    source {
+      storage_source {
+        bucket = google_storage_bucket.functions_source.name
+        object = google_storage_bucket_object.functions_zip.name
+      }
+    }
+  }
+
+  service_config {
+    max_instance_count = 1
+    available_memory   = "256M"
+    timeout_seconds    = 60
+    service_account_email = google_service_account.functions_sa.email
+    
+    environment_variables = {
+      ENVIRONMENT = "production"
+    }
+
+    secret_environment_variables {
+      key        = "EMAIL_USER"
+      project_id = var.project
+      secret     = google_secret_manager_secret.email_user.secret_id
+      version    = "latest"
+    }
+
+    secret_environment_variables {
+      key        = "EMAIL_PASSWORD"
+      project_id = var.project
+      secret     = google_secret_manager_secret.email_password.secret_id
+      version    = "3"
+    }
+  }
+
+  depends_on = [
+    google_project_service.cloudfunctions,
+    google_service_account.functions_sa,
+    google_project_iam_member.functions_secret_access
+  ]
+}
+
+# Storage bucket for Cloud Functions source code
+resource "google_storage_bucket" "functions_source" {
+  name     = "${var.project}-functions-source"
+  location = var.region
+  uniform_bucket_level_access = true
+}
+
+# Zip the Cloud Functions source code
+data "archive_file" "functions_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../services/cloud_functions"
+  output_path = "${path.module}/functions.zip"
+}
+
+# Upload the zip to storage
+resource "google_storage_bucket_object" "functions_zip" {
+  name   = "functions-${data.archive_file.functions_zip.output_md5}.zip"
+  bucket = google_storage_bucket.functions_source.name
+  source = data.archive_file.functions_zip.output_path
+}
+
+####################################
+# 9) Outputs
 ####################################
 output "artifact_registry_repo" {
   value = google_artifact_registry_repository.docker.repository_id
@@ -211,8 +463,20 @@ output "api_service_account" {
   value = google_service_account.api_sa.email
 }
 
+output "functions_service_account" {
+  value = google_service_account.functions_sa.email
+}
+
 output "cloud_run_url" {
   value = google_cloud_run_service.api.status[0].url
+}
+
+output "ai_service_url" {
+  value = google_cloud_run_service.ai.status[0].url
+}
+
+output "cloud_function_url" {
+  value = google_cloudfunctions2_function.send_client_invitation.url
 }
 
 ####################################

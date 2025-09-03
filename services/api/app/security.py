@@ -6,6 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from pydantic import BaseModel
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -13,10 +17,11 @@ logger = logging.getLogger(__name__)
 
 class AuthedContext(BaseModel):
     user_id: int
-    firebase_uid: str
+    org_id: int
     email: str
     name: str
-    is_admin: bool
+    role: str
+    firebase_uid: str
 
 async def get_current_user(ctx_req: Request, db: AsyncSession = Depends(get_db)) -> AuthedContext:
     """Get current authenticated user from Firebase token"""
@@ -30,46 +35,77 @@ async def get_current_user(ctx_req: Request, db: AsyncSession = Depends(get_db))
     
     try:
         decoded = auth.verify_id_token(id_token, check_revoked=True)
-        logger.info(f"Token verified - UID: {decoded.get('uid', 'N/A')}")
+        firebase_uid = decoded.get("uid")
+        email = decoded.get("email", "")
+        logger.info(f"Token verified - UID: {firebase_uid}")
     except Exception as e:
         error_msg = f"Invalid/Revoked token: {e}"
         logger.error(f"Token verification failed: {error_msg}")
         raise HTTPException(401, error_msg)
 
-    firebase_uid = decoded["uid"]
-    email = decoded.get("email", "")
-    name = decoded.get("name", "")
-
-    # Check if user exists in database
-    result = await db.execute(
-        text("SELECT id, is_admin, disabled FROM users WHERE firebase_uid = :uid"),
-        {"uid": firebase_uid}
-    )
-    user = result.fetchone()
+    # For development mode, try to find user by Firebase UID first, then by email
+    import os
+    environment = os.getenv("ENVIRONMENT", "production")
+    
+    if environment.lower() in ["development", "local"]:
+        # Try to find user by Firebase UID first (for development mode)
+        result = await db.execute(
+            text("SELECT id, org_id, name, role, status FROM users WHERE firebase_uid = :firebase_uid"),
+            {"firebase_uid": firebase_uid}
+        )
+        user = result.fetchone()
+        
+        if not user:
+            # Fallback to email lookup
+            result = await db.execute(
+                text("SELECT id, org_id, name, role, status FROM users WHERE email = :email"),
+                {"email": email}
+            )
+            user = result.fetchone()
+    else:
+        # Production mode - use email lookup
+        result = await db.execute(
+            text("SELECT id, org_id, name, role, status FROM users WHERE email = :email"),
+            {"email": email}
+        )
+        user = result.fetchone()
     
     if not user:
-        logger.warning(f"User not found in database - Firebase UID: {firebase_uid}")
+        logger.warning(f"User not found in database - Email: {email}, UID: {firebase_uid}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found. Please complete registration first."
         )
     
-    user_id, is_admin, disabled = user
+    user_id, org_id, name, role, user_status = user
     
-    if disabled:
-        logger.warning(f"User account is disabled - Firebase UID: {firebase_uid}")
-        raise HTTPException(403, "User account is disabled")
+    if user_status != 'active':
+        logger.warning(f"User account is not active - Email: {email}")
+        raise HTTPException(403, "User account is not active")
 
     return AuthedContext(
         user_id=user_id,
-        firebase_uid=firebase_uid,
+        org_id=org_id,
         email=email,
         name=name,
-        is_admin=is_admin
+        role=role,
+        firebase_uid=firebase_uid
     )
 
-async def require_admin(ctx: AuthedContext = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def require_therapist(ctx: AuthedContext = Depends(get_current_user)):
+    """Require therapist privileges"""
+    if ctx.role not in ['therapist', 'admin']:
+        raise HTTPException(403, "Therapist privileges required")
+    return ctx
+
+async def require_admin(ctx: AuthedContext = Depends(get_current_user)):
     """Require admin privileges"""
-    if not ctx.is_admin:
+    if ctx.role != 'admin':
         raise HTTPException(403, "Admin privileges required")
+    return ctx
+
+async def require_client(ctx: AuthedContext = Depends(get_current_user)):
+    """Require client privileges"""
+    if ctx.role != 'client':
+        raise HTTPException(403, "Client privileges required")
     return ctx
