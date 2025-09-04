@@ -129,8 +129,12 @@ const ClientProfile = ({ clientId, onBack }) => {
       const treatmentCodesArray = Array.isArray(treatmentCodes) ? treatmentCodes : [treatmentCodes];
       formData.append('treatment_codes', JSON.stringify(treatmentCodesArray));
 
-      const response = await fetch(`${import.meta.env.VITE_AI_SERVICE_URL}/generate-soap-note`, {
+      const token = await getToken();
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/ai/generate-soap-note`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: formData
       });
 
@@ -284,9 +288,10 @@ const ClientProfile = ({ clientId, onBack }) => {
   const generateRecommendations = async () => {
     try {
       const token = await getToken();
-      const response = await fetch(`${import.meta.env.VITE_AI_SERVICE_URL}/recommend-exercises`, {
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/ai/recommend/exercises`, {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -417,8 +422,12 @@ const ClientProfile = ({ clientId, onBack }) => {
       const formData = new FormData();
       formData.append('audio_file', audioBlob, 'recording.wav');
 
-      const response = await fetch(`${import.meta.env.VITE_AI_SERVICE_URL}/transcribe-audio`, {
+      const token = await getToken();
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/ai/transcribe-audio`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: formData
       });
 

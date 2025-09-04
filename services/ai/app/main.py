@@ -12,10 +12,31 @@ load_dotenv()
 
 app = FastAPI(title="TheraVillage AI Service", version="1.0.0")
 
-# CORS middleware
+# CORS middleware - Environment aware
+environment = os.getenv("ENVIRONMENT", "development")
+cors_origins = os.getenv("CORS_ALLOWED_ORIGINS", "")
+
+if cors_origins:
+    # Use environment variable if provided
+    allowed_origins = [origin.strip() for origin in cors_origins.split(",")]
+elif environment == "development":
+    # Development: Allow all origins
+    allowed_origins = ["*"]
+else:
+    # Production fallback: Allow common origins
+    allowed_origins = [
+        "https://theravillage-edb89.web.app",
+        "https://theravillage-edb89.firebaseapp.com"
+    ]
+
+print(f"🔧 AI Service CORS Configuration:")
+print(f"   Environment: {environment}")
+print(f"   CORS_ALLOWED_ORIGINS: {cors_origins}")
+print(f"   Allowed origins: {allowed_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

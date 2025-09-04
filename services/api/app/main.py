@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .db import init_db
-from .routers import health, auth, client, therapist, admin
+from .routers import health, auth, client, therapist, admin, ai
 
 app = FastAPI(title="TheraVillage API", version="1.0.0")
 
@@ -135,5 +135,6 @@ app.include_router(auth.router, tags=["auth"])
 app.include_router(client.router, tags=["client"])
 app.include_router(therapist.router, tags=["therapist"])
 app.include_router(admin.router, tags=["admin"])
+app.include_router(ai.router, tags=["ai"])
 
 

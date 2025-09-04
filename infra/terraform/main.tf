@@ -206,6 +206,12 @@ resource "google_cloud_run_service" "api" {
           value = var.frontend_url
         }
 
+        # Set AI service URL for internal communication
+        env {
+          name  = "AI_SERVICE_URL"
+          value = "https://tv-ai-326430627435.us-central1.run.app"
+        }
+
         ports { container_port = 8080 }
 
         # Secrets → env vars (Cloud Run v1 schema: value_from.name/key)
@@ -271,6 +277,12 @@ resource "google_cloud_run_service" "ai" {
         env {
           name  = "ENVIRONMENT"
           value = "production"
+        }
+
+        # Set CORS allowed origins for production
+        env {
+          name  = "CORS_ALLOWED_ORIGINS"
+          value = var.cors_allowed_origins
         }
 
         # AI Service configuration

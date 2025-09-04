@@ -26,7 +26,6 @@ COPY pyproject.toml poetry.lock* ./
 # Install dependencies
 RUN poetry install --no-interaction --no-ansi
 
-
 # Copy application code
 COPY . .
 
