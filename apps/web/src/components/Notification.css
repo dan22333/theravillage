@@ -1,0 +1,248 @@
+/* Notification Container */
+.notification-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 400px;
+  width: 100%;
+}
+
+/* Individual Notification */
+.notification {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  transform: translateX(100%);
+  opacity: 0;
+  transition: all 0.3s ease-in-out;
+  backdrop-filter: blur(10px);
+  border: 1px solid;
+}
+
+.notification.visible {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+/* Notification Types */
+.notification.success {
+  background: linear-gradient(135deg, #d1fae5, #ecfdf5);
+  border-color: #10b981;
+  color: #065f46;
+}
+
+.notification.error {
+  background: linear-gradient(135deg, #fee2e2, #fef2f2);
+  border-color: #ef4444;
+  color: #991b1b;
+}
+
+.notification.warning {
+  background: linear-gradient(135deg, #fef3c7, #fffbeb);
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.notification.info {
+  background: linear-gradient(135deg, #dbeafe, #eff6ff);
+  border-color: #3b82f6;
+  color: #1e40af;
+}
+
+/* Notification Icon */
+.notification-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.notification.success .notification-icon {
+  color: #10b981;
+}
+
+.notification.error .notification-icon {
+  color: #ef4444;
+}
+
+.notification.warning .notification-icon {
+  color: #f59e0b;
+}
+
+.notification.info .notification-icon {
+  color: #3b82f6;
+}
+
+/* Notification Content */
+.notification-content {
+  flex: 1;
+}
+
+.notification-content p {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* Close Button */
+.notification-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.notification-close:hover {
+  opacity: 1;
+}
+
+/* Confirm Dialog */
+.confirm-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.confirm-dialog {
+  background: white;
+  border-radius: 16px;
+  max-width: 400px;
+  width: 90%;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  animation: slideUp 0.3s ease-out;
+}
+
+.confirm-header {
+  padding: 24px 32px 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.confirm-header h3 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.confirm-content {
+  padding: 20px 32px;
+}
+
+.confirm-content p {
+  margin: 0;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 12px;
+  padding: 20px 32px 32px;
+  justify-content: flex-end;
+}
+
+.confirm-cancel-btn,
+.confirm-confirm-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+}
+
+.confirm-cancel-btn {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.confirm-cancel-btn:hover {
+  background: #e5e7eb;
+}
+
+.confirm-confirm-btn {
+  background: #ef4444;
+  color: white;
+}
+
+.confirm-confirm-btn:hover {
+  background: #dc2626;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+  .notification-container {
+    top: 10px;
+    right: 10px;
+    left: 10px;
+    max-width: none;
+  }
+  
+  .notification {
+    padding: 14px 16px;
+  }
+  
+  .notification-content p {
+    font-size: 13px;
+  }
+  
+  .confirm-dialog {
+    margin: 20px;
+  }
+  
+  .confirm-header,
+  .confirm-content,
+  .confirm-actions {
+    padding: 16px 20px;
+  }
+  
+  .confirm-actions {
+    flex-direction: column-reverse;
+  }
+  
+  .confirm-cancel-btn,
+  .confirm-confirm-btn {
+    width: 100%;
+  }
+}

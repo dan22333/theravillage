@@ -1,6 +1,7 @@
 import React, { Suspense } from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
+import { NotificationProvider } from './components/Notification'
 import MainApp from './components/MainApp'
 
 import ClientProfileCompletion from './components/ClientProfileCompletion'
@@ -46,21 +47,23 @@ const AppLoading = () => (
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Suspense fallback={<AppLoading />}>
-          <div className="App">
-            <main className="main-content">
-              <Routes>
-                <Route path="/" element={<MainApp />} />
-                <Route path="/client/complete-profile" element={<ClientProfileCompletion />} />
-                <Route path="/admin" element={<AdminPanel />} />
-                <Route path="/invite/:invitationToken" element={<InvitationAccept />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
-          </div>
-        </Suspense>
-      </Router>
+      <NotificationProvider>
+        <Router>
+          <Suspense fallback={<AppLoading />}>
+            <div className="App">
+              <main className="main-content">
+                <Routes>
+                  <Route path="/" element={<MainApp />} />
+                  <Route path="/client/complete-profile" element={<ClientProfileCompletion />} />
+                  <Route path="/admin" element={<AdminPanel />} />
+                  <Route path="/invite/:invitationToken" element={<InvitationAccept />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </main>
+            </div>
+          </Suspense>
+        </Router>
+      </NotificationProvider>
     </AuthProvider>
   )
 }

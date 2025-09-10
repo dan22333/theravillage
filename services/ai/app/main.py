@@ -5,7 +5,6 @@ import os
 import json
 from dotenv import load_dotenv
 from .ai_service import AIService
-from .models import ExerciseRecommendationRequest
 
 # Load environment variables from .env file
 load_dotenv()
@@ -70,21 +69,6 @@ async def transcribe_audio(audio_file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to transcribe audio: {str(e)}")
 
-@app.post("/recommend/exercises")
-async def recommend_exercises(request: ExerciseRecommendationRequest):
-    """Get AI-powered exercise recommendations based on client needs"""
-    try:
-        recommendations = await ai_service.recommend_exercises(
-            client_age=request.client_age,
-            diagnosis=request.diagnosis,
-            goals=request.goals,
-            equipment_available=request.equipment_available,
-            difficulty_level=request.difficulty_level,
-            session_duration=request.session_duration
-        )
-        return {"recommendations": recommendations}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate recommendations: {str(e)}")
 
 @app.post("/generate-soap-note")
 async def generate_soap_note(
@@ -153,79 +137,3 @@ async def generate_soap_note(
         error_details = f"Failed to generate SOAP note: {str(e)}\nTraceback: {traceback.format_exc()}"
         print(f"SOAP Note Generation Error: {error_details}")
         raise HTTPException(status_code=500, detail=f"Failed to generate SOAP note: {str(e)}")
-
-@app.post("/generate/homework")
-async def generate_homework_plan(request: ExerciseRecommendationRequest):
-    """Generate homework plan based on session activities and client needs"""
-    try:
-        homework_plan = await ai_service.generate_homework_plan(
-            client_age=request.client_age,
-            diagnosis=request.diagnosis,
-            goals=request.goals,
-            session_activities=request.session_activities,
-            equipment_available=request.equipment_available,
-            difficulty_level=request.difficulty_level
-        )
-        return {"homework_plan": homework_plan}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate homework plan: {str(e)}")
-
-@app.get("/exercises/search")
-async def search_exercises(
-    query: str,
-    tags: Optional[str] = None,
-    difficulty: Optional[str] = None,
-    age_group: Optional[str] = None
-):
-    """Search exercises using semantic search"""
-    try:
-        results = await ai_service.search_exercises(
-            query=query,
-            tags=tags,
-            difficulty=difficulty,
-            age_group=age_group
-        )
-        return {"exercises": results}
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Exercise search not implemented - requires Pinecone integration")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to search exercises: {str(e)}")
-
-@app.post("/analyze/session")
-async def analyze_session(
-    transcript: str,
-    client_age: int,
-    diagnosis: str,
-    goals: List[str]
-):
-    """Analyze session transcript and provide insights"""
-    try:
-        analysis = await ai_service.analyze_session(
-            transcript=transcript,
-            client_age=client_age,
-            diagnosis=diagnosis,
-            goals=goals
-        )
-        return {"analysis": analysis}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to analyze session: {str(e)}")
-
-@app.get("/models/available")
-async def get_available_models():
-    """Get list of available AI models"""
-    return {
-        "models": [
-            {
-                "name": "gpt-4o-mini",
-                "description": "Fast and efficient GPT-4 model",
-                "max_tokens": 1000,
-                "cost_per_1k_tokens": 0.00015
-            },
-            {
-                "name": "gpt-4o",
-                "description": "Most capable GPT-4 model",
-                "max_tokens": 4000,
-                "cost_per_1k_tokens": 0.005
-            }
-        ]
-    }

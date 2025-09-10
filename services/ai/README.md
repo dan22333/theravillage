@@ -1,45 +1,29 @@
 # TheraVillage AI Service
 
-The AI Service provides intelligent recommendations and analysis for pediatric therapy sessions using advanced language models and vector search capabilities.
-
-AI-powered recommendation and note generation service for pediatric therapy using LangChain, OpenAI, and Pinecone.
+Clean and focused AI service for pediatric therapy providing audio transcription and SOAP note generation using OpenAI's advanced language models.
 
 ## Features
 
-### 🧠 AI-Powered Exercise Recommendations
-- Generate personalized exercise recommendations based on client age, diagnosis, and goals
-- Consider available equipment and difficulty levels
-- Provide reasoning for each recommendation
+### 🎤 Audio Transcription
+- Transcribe therapy session audio using OpenAI Whisper
+- Support for multiple audio formats
+- High accuracy speech-to-text conversion
 
 ### 📝 SOAP Note Generation
 - Generate professional SOAP notes from session transcripts
 - Include client context, goals, and observations
-- Structured output with Subjective, Objective, Assessment, and Plan sections
-
-### 📚 Homework Plan Creation
-- Create comprehensive homework plans based on session activities
-- Include frequency, duration, and parent guidance
-- Progress tracking recommendations
-
-### 🔍 Semantic Exercise Search
-- Vector-based search using Pinecone
-- Filter by tags, difficulty, and age groups
-- Relevance scoring for search results
-
-### 📊 Session Analysis
-- Analyze session transcripts for insights
-- Assess progress toward goals
-- Identify risk factors and next steps
+- Structured JSON output with Subjective, Objective, Assessment, and Plan sections
+- AI-powered synthesis and recommendations
 
 ## Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   FastAPI App   │    │   OpenAI API    │    │   Pinecone DB   │
+│   FastAPI App   │    │   OpenAI API    │    │ Google Cloud    │
 │                 │    │                 │    │                 │
-│ • Endpoints     │◄──►│ • GPT-4 Models  │    │ • Vector Store  │
-│ • Request/Resp  │    │ • Embeddings    │    │ • Exercise Data │
-│ • Validation    │    │ • LLM Chains    │    │ • Metadata      │
+│ • 2 Endpoints   │◄──►│ • GPT-4 Models  │    │ • Secret Mgmt   │
+│ • Audio Upload  │    │ • Whisper STT   │    │ • Secure Keys   │
+│ • SOAP Gen      │    │ • Structured    │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
@@ -47,23 +31,22 @@ AI-powered recommendation and note generation service for pediatric therapy usin
 
 ### 1. Environment Variables
 
-All environment variables are configured in the main project `env.local` file:
+Configure these in Google Cloud Secret Manager:
 
 ```bash
-# AI Service Configuration
+# Required Secrets
 OPENAI_API_KEY=your_openai_api_key_here
-PINECONE_API_KEY=your_pinecone_api_key_here
-PINECONE_ENVIRONMENT=your_pinecone_environment_here
-PINECONE_INDEX_NAME=theravillage-exercises
+
+# Optional Configuration
 MODEL_NAME=gpt-4o-mini
-MAX_TOKENS=1000
+MAX_TOKENS=3000
 TEMPERATURE=0.7
 ```
 
 ### 2. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+poetry install
 ```
 
 ### 3. Run the Service
@@ -74,105 +57,115 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## API Endpoints
 
-### Exercise Recommendations
-- `POST /recommend/exercises` - Get AI-powered exercise recommendations
+### Audio Transcription
+- `POST /transcribe-audio` - Transcribe audio files using OpenAI Whisper
 
 ### SOAP Note Generation
-- `POST /generate/soap` - Generate SOAP notes from session data
+- `POST /generate-soap-note` - Generate SOAP notes from transcripts and session data
 
-### Homework Planning
-- `POST /generate/homework` - Create homework plans
-
-### Exercise Search
-- `GET /exercises/search` - Semantic search for exercises
-
-### Session Analysis
-- `POST /analyze/session` - Analyze session transcripts
-
-### System Info
-- `GET /health` - Health check
-- `GET /models/available` - List available AI models
+### System
+- `GET /health` - Health check endpoint
 
 ## Usage Examples
 
-### Exercise Recommendations
+### Audio Transcription
 
 ```python
 import requests
 
-response = requests.post("http://localhost:8000/recommend/exercises", json={
-    "client_age": 8,
-    "diagnosis": "Developmental Coordination Disorder",
-    "goals": ["Improve balance", "Enhance coordination"],
-    "equipment_available": ["balance beam", "therapy ball"],
-    "difficulty_level": "moderate",
-    "session_duration": 30
-})
-
-recommendations = response.json()["recommendations"]
+# Upload audio file for transcription
+with open("session_audio.wav", "rb") as audio_file:
+    files = {"audio_file": audio_file}
+    response = requests.post("http://localhost:8000/transcribe-audio", files=files)
+    
+transcript = response.json()["transcript"]
 ```
 
 ### SOAP Note Generation
 
 ```python
-response = requests.post("http://localhost:8000/generate/soap", json={
+# From transcript
+data = {
     "transcript": "Client worked on balance exercises...",
     "client_age": 8,
     "diagnosis": "Developmental Coordination Disorder",
-    "goals": ["Improve balance", "Enhance coordination"],
-    "session_activities": ["Balance beam walking", "Ball tossing"],
+    "short_term_goals": '["Improve balance", "Enhance coordination"]',
+    "long_term_goals": '["Independent mobility"]',
+    "session_activities": '["Balance beam walking", "Ball tossing"]',
     "observations": "Client showed improved confidence"
-})
+}
 
+response = requests.post("http://localhost:8000/generate-soap-note", data=data)
 soap_note = response.json()["soap_note"]
+```
+
+### Combined Audio + SOAP Generation
+
+```python
+# Upload audio and generate SOAP note in one call
+with open("session_audio.wav", "rb") as audio_file:
+    files = {"audio_file": audio_file}
+    data = {
+        "client_age": 8,
+        "diagnosis": "Developmental Coordination Disorder",
+        "short_term_goals": '["Improve balance"]',
+        "long_term_goals": '["Independent mobility"]'
+    }
+    
+    response = requests.post(
+        "http://localhost:8000/generate-soap-note", 
+        files=files, 
+        data=data
+    )
+    
+result = response.json()
+transcript = result["transcript"]  # Transcribed audio
+soap_note = result["soap_note"]    # Generated SOAP note
 ```
 
 ## Data Models
 
-### ExerciseRecommendation
-- `exercise_id`: Unique identifier
-- `title`: Exercise name
-- `description`: Detailed description
-- `instructions`: Step-by-step instructions
-- `difficulty`: Difficulty level
-- `age_appropriateness`: Age suitability
-- `equipment_needed`: Required equipment
-- `estimated_duration`: Time to complete
-- `confidence_score`: AI confidence (0-1)
-- `reasoning`: Explanation for recommendation
-
 ### SOAPNote
-- `subjective`: Client's reported status
-- `objective`: Measurable observations
-- `assessment`: Clinical interpretation
-- `plan`: Next steps and recommendations
-- `goals_addressed`: Goals worked on
-- `next_session_recommendations`: Future session plans
-- `confidence_score`: AI confidence (0-1)
+- `subjective`: Client's reported status and concerns
+- `objective`: Measurable observations and performance
+- `assessment`: Clinical interpretation and progress evaluation  
+- `plan`: Next steps and treatment recommendations
+- `synthesized_summary`: Concise summary of session outcomes
+- `goals_addressed`: Specific goals worked on during session
+- `next_session_recommendations`: Targeted activities for next session
+- `confidence_score`: AI confidence in the analysis (0-1)
+- `short_term_goals`: Client's short-term therapy goals
+- `long_term_goals`: Client's long-term therapy goals
+- `time_in`: Session start time (optional)
+- `time_out`: Session end time (optional)
+- `units`: Therapy units (optional)
+- `treatment_codes`: CPT codes (optional)
 
 ## Configuration
 
 ### AI Model Settings
 - `MODEL_NAME`: OpenAI model to use (default: gpt-4o-mini)
-- `MAX_TOKENS`: Maximum tokens per response (default: 1000)
+- `MAX_TOKENS`: Maximum tokens per response (default: 3000)
 - `TEMPERATURE`: Response creativity (0-1, default: 0.7)
 
-### Pinecone Settings
-- `PINECONE_INDEX_NAME`: Vector database index name
-- Vector dimensions: 1536 (OpenAI embeddings)
+### Security
+- API keys managed via Google Cloud Secret Manager
+- Environment-aware CORS configuration
+- Input validation with Pydantic models
+- Secure file handling for audio uploads
 
 ## Development
 
 ### Local Development
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+poetry install
 
 # Run with auto-reload
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8000
 
-# Run tests (when implemented)
-pytest
+# Check health
+curl http://localhost:8000/health
 ```
 
 ### Docker Development
@@ -182,36 +175,32 @@ docker-compose up tv-ai
 
 # View logs
 docker-compose logs -f tv-ai
+
+# Health check
+curl http://localhost:8001/health
 ```
 
 ## Error Handling
 
-The service includes comprehensive error handling:
-- API key validation
-- Fallback to mock data when AI services fail
+Comprehensive error handling includes:
+- OpenAI API key validation via Secret Manager
+- Audio file format validation
+- JSON schema validation for structured output
 - Detailed error messages for debugging
-- Graceful degradation for missing services
-
-## Security
-
-- API key management via environment variables
-- Input validation with Pydantic models
-- CORS configuration for cross-origin requests
-- No sensitive data logging
+- Graceful fallbacks for service failures
 
 ## Monitoring
 
-- Health check endpoint
+- Health check endpoint for container orchestration
 - Request/response logging
-- Error tracking and reporting
-- Performance metrics (when implemented)
+- Error tracking with detailed stack traces
+- Performance monitoring for AI API calls
 
-## Future Enhancements
+## Production Deployment
 
-- [ ] Whisper integration for voice transcription
-- [ ] Advanced exercise library management
-- [ ] Custom model fine-tuning
-- [ ] Batch processing capabilities
-- [ ] Advanced analytics and reporting
-- [ ] Multi-language support
-- [ ] Integration with EMR systems
+The service is designed for Google Cloud Run deployment with:
+- Automatic scaling based on demand
+- Secret Manager integration for secure API key management
+- Health checks for container management
+- CORS configuration for web client access
+- Optimized Docker image with Poetry dependency management

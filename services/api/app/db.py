@@ -109,6 +109,9 @@ async def init_db():
     print("🔧 Initializing database tables...")
         
     async with engine.begin() as conn:
+        # Install pgvector extension for vector operations
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        print("✅ pgvector extension installed")
         # 1. Organizations (must be created BEFORE users due to foreign key constraint)
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS organizations (
@@ -167,9 +170,23 @@ async def init_db():
                 avatar_url TEXT,
                 base_location JSONB,
                 travel_radius_km INTEGER DEFAULT 20,
+                timezone VARCHAR(50) DEFAULT 'America/New_York',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
+        """))
+
+        # Add timezone column if it doesn't exist (for existing databases)
+        await conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='therapist_profiles' AND column_name='timezone'
+            ) THEN
+                ALTER TABLE therapist_profiles ADD COLUMN timezone VARCHAR(50) DEFAULT 'America/New_York';
+            END IF;
+        END $$;
         """))
 
         await conn.execute(text("""
@@ -720,6 +737,321 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_therapist_assignments_client ON therapist_assignments(client_id);
         """))
 
+        # ===================================
+        # SCRAPER SYSTEM TABLES
+        # ===================================
+        
+        # 1. Treatment Topics (Seed Data)
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS treatment_topics (
+                id SERIAL PRIMARY KEY,
+                topic_name VARCHAR(255) NOT NULL,
+                category VARCHAR(100) NOT NULL,
+                subcategory VARCHAR(100),
+                search_keywords TEXT[],
+                age_range_min INTEGER DEFAULT 0,
+                age_range_max INTEGER DEFAULT 18,
+                description TEXT,
+                version INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE,
+                UNIQUE(topic_name, version)
+            )
+        """))
+
+        # 2. Scrape Jobs Tracking
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS scrape_jobs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                job_type VARCHAR(50) DEFAULT 'full_scrape',
+                topics_version INTEGER NOT NULL,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                status VARCHAR(20) DEFAULT 'running',
+                topics_processed INTEGER DEFAULT 0,
+                tavily_queries_made INTEGER DEFAULT 0,
+                tavily_results_received INTEGER DEFAULT 0,
+                llm_processing_attempts INTEGER DEFAULT 0,
+                treatments_created INTEGER DEFAULT 0,
+                vectors_created INTEGER DEFAULT 0,
+                errors_encountered INTEGER DEFAULT 0,
+                error_log JSONB DEFAULT '[]'::jsonb,
+                job_config JSONB,
+                performance_metrics JSONB
+            )
+        """))
+
+        # 3. Tavily Query Responses
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tavily_responses (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                scrape_job_id UUID REFERENCES scrape_jobs(id),
+                topic_id INTEGER REFERENCES treatment_topics(id),
+                query_text TEXT NOT NULL,
+                search_depth VARCHAR(20),
+                max_results INTEGER,
+                include_domains TEXT[],
+                exclude_domains TEXT[],
+                tavily_query VARCHAR(500),
+                follow_up_questions JSONB,
+                answer TEXT,
+                images JSONB,
+                response_time FLOAT,
+                request_id VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                total_results_count INTEGER DEFAULT 0
+            )
+        """))
+
+        # 4. Tavily Individual Results
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tavily_results (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tavily_response_id UUID REFERENCES tavily_responses(id),
+                url TEXT NOT NULL,
+                title TEXT,
+                content TEXT NOT NULL,
+                raw_content TEXT,
+                score FLOAT,
+                content_length INTEGER,
+                domain VARCHAR(255),
+                is_academic_source BOOLEAN DEFAULT FALSE,
+                is_clinical_source BOOLEAN DEFAULT FALSE,
+                source_credibility_score FLOAT,
+                llm_processed BOOLEAN DEFAULT FALSE,
+                processing_error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
+        # 5. LLM Processing Attempts
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS llm_processing_attempts (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tavily_result_id UUID REFERENCES tavily_results(id),
+                scrape_job_id UUID REFERENCES scrape_jobs(id),
+                model_name VARCHAR(100),
+                prompt_template_version VARCHAR(20),
+                prompt_text TEXT,
+                raw_llm_response TEXT,
+                parsed_json JSONB,
+                processing_time_ms INTEGER,
+                tokens_used INTEGER,
+                cost_estimate DECIMAL(10,6),
+                status VARCHAR(20) DEFAULT 'pending',
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
+        # 6. Structured Treatments
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS treatments (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                scrape_job_id UUID REFERENCES scrape_jobs(id),
+                topic_id INTEGER REFERENCES treatment_topics(id),
+                tavily_result_id UUID REFERENCES tavily_results(id),
+                llm_attempt_id UUID REFERENCES llm_processing_attempts(id),
+                treatment_name VARCHAR(500) NOT NULL,
+                treatment_description TEXT NOT NULL,
+                treatment_objective TEXT,
+                age_range_min INTEGER,
+                age_range_max INTEGER,
+                difficulty_level VARCHAR(20),
+                duration_minutes INTEGER,
+                frequency_per_week INTEGER,
+                step_by_step_instructions JSONB,
+                required_materials JSONB,
+                safety_considerations JSONB,
+                target_skills JSONB,
+                contraindications JSONB,
+                modifications JSONB,
+                progress_indicators JSONB,
+                evidence_level VARCHAR(30),
+                source_quality_score FLOAT DEFAULT 0.0,
+                llm_confidence_score FLOAT DEFAULT 0.0,
+                source_url TEXT,
+                source_title TEXT,
+                source_domain VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE,
+                quality_reviewed BOOLEAN DEFAULT FALSE,
+                review_notes TEXT
+            )
+        """))
+
+        # 7. Treatment Vectors for Semantic Search  
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS treatment_vectors (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                treatment_id UUID REFERENCES treatments(id) ON DELETE CASCADE,
+                embedding_text TEXT NOT NULL,
+                embedding_model VARCHAR(50) DEFAULT 'text-embedding-3-small',
+                embedding VECTOR(1536),
+                topic_category VARCHAR(100),
+                age_range_min INTEGER,
+                age_range_max INTEGER,
+                difficulty_level VARCHAR(20),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
+        # 8. Search Query Logs
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS search_queries (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id INTEGER,
+                query_text TEXT NOT NULL,
+                filters JSONB,
+                vector_search_results JSONB,
+                reranked_results JSONB,
+                final_results_count INTEGER,
+                search_time_ms INTEGER,
+                rerank_time_ms INTEGER,
+                total_time_ms INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
+        # Scraper System Indexes
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_treatment_topics_category ON treatment_topics(category);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_treatment_topics_version ON treatment_topics(version);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status ON scrape_jobs(status);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_tavily_responses_job_topic ON tavily_responses(scrape_job_id, topic_id);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_tavily_results_response_id ON tavily_results(tavily_response_id);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_treatments_topic_id ON treatments(topic_id);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_treatments_age_range ON treatments(age_range_min, age_range_max);
+        """))
+
+        print("✅ Scraper system tables created successfully")
+
+        # ===================================
+        # CALENDAR AND SCHEDULING SYSTEM TABLES
+        # ===================================
+        
+        # 1. Therapist Calendar Slots (specific time slots marked as available)
+        # All times stored in Eastern Time for consistency
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS therapist_calendar_slots (
+                id SERIAL PRIMARY KEY,
+                therapist_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                slot_date DATE NOT NULL,
+                start_time TIME NOT NULL,
+                end_time TIME NOT NULL,
+                status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'booked', 'blocked')),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                UNIQUE(therapist_id, slot_date, start_time)
+            )
+        """))
+        
+
+        # 2. Scheduling Requests (when clients request meetings)
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS scheduling_requests (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                therapist_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                requested_slot_id INTEGER REFERENCES therapist_calendar_slots(id) ON DELETE SET NULL,
+                requested_date DATE NOT NULL,
+                requested_start_time TIME NOT NULL,
+                requested_end_time TIME NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'declined', 'counter_proposed', 'cancelled')),
+                client_message TEXT,
+                therapist_response TEXT,
+                suggested_alternatives JSONB,
+                cancelled_by VARCHAR(10) CHECK (cancelled_by IN ('client', 'therapist')),
+                cancellation_reason TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                responded_at TIMESTAMP WITH TIME ZONE
+            )
+        """))
+
+        # 3. Calendar Notifications (for scheduling events)
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS calendar_notifications (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                type VARCHAR(50) NOT NULL CHECK (type IN ('scheduling_request', 'request_approved', 'request_declined', 'request_cancelled', 'counter_proposal', 'meeting_reminder', 'appointment_scheduled', 'appointment_updated', 'appointment_cancelled', 'appointment_rescheduled')),
+                related_request_id INTEGER REFERENCES scheduling_requests(id) ON DELETE CASCADE,
+                related_appointment_id INTEGER REFERENCES appointments(id) ON DELETE CASCADE,
+                title VARCHAR(255) NOT NULL,
+                message TEXT NOT NULL,
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """))
+
+        # Add scheduling_request_id to appointments table if it doesn't exist
+        await conn.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name='appointments' AND column_name='scheduling_request_id'
+            ) THEN
+                ALTER TABLE appointments ADD COLUMN scheduling_request_id INTEGER REFERENCES scheduling_requests(id) ON DELETE SET NULL;
+            END IF;
+        END $$;
+        """))
+
+        # Calendar system indexes
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_therapist_calendar_slots_therapist_date ON therapist_calendar_slots(therapist_id, slot_date);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_therapist_calendar_slots_status ON therapist_calendar_slots(status);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_scheduling_requests_client ON scheduling_requests(client_id);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_scheduling_requests_therapist ON scheduling_requests(therapist_id);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_scheduling_requests_status ON scheduling_requests(status);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_calendar_notifications_user_unread ON calendar_notifications(user_id, is_read);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_appointments_scheduling_request ON appointments(scheduling_request_id);
+        """))
+
+        # Update existing calendar_notifications constraint if needed
+        await conn.execute(text("""
+        DO $$
+        BEGIN
+            -- Drop old constraint if it exists
+            IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'calendar_notifications_type_check') THEN
+                ALTER TABLE calendar_notifications DROP CONSTRAINT calendar_notifications_type_check;
+            END IF;
+            
+            -- Add new constraint with all notification types
+            ALTER TABLE calendar_notifications 
+            ADD CONSTRAINT calendar_notifications_type_check 
+            CHECK (type IN ('scheduling_request', 'request_approved', 'request_declined', 'counter_proposal', 'meeting_reminder', 'appointment_scheduled', 'appointment_updated', 'appointment_cancelled', 'appointment_rescheduled'));
+        END $$;
+        """))
+
+        print("✅ Calendar and scheduling system tables created successfully")
+
         # Create default organization and admin user
         print("🔧 Creating default organization and admin user")
         await conn.execute(text("""
@@ -740,3 +1072,43 @@ async def init_db():
         """))
         
         await conn.commit()
+        
+        # TEMPORARY MIGRATION CODE - Add new columns to existing tables
+        print("🔄 Running temporary migrations for scheduling_requests table...")
+        try:
+            # Add cancelled_by column if it doesn't exist
+            await conn.execute(text("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name = 'scheduling_requests' 
+                                  AND column_name = 'cancelled_by') THEN
+                        ALTER TABLE scheduling_requests 
+                        ADD COLUMN cancelled_by VARCHAR(10) CHECK (cancelled_by IN ('client', 'therapist'));
+                        RAISE NOTICE 'Added cancelled_by column to scheduling_requests';
+                    END IF;
+                END $$;
+            """))
+            
+            # Add cancellation_reason column if it doesn't exist
+            await conn.execute(text("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name = 'scheduling_requests' 
+                                  AND column_name = 'cancellation_reason') THEN
+                        ALTER TABLE scheduling_requests 
+                        ADD COLUMN cancellation_reason TEXT;
+                        RAISE NOTICE 'Added cancellation_reason column to scheduling_requests';
+                    END IF;
+                END $$;
+            """))
+            
+            await conn.commit()
+            print("✅ Temporary migrations completed successfully")
+            
+        except Exception as e:
+            print(f"⚠️  Migration warning (may be expected): {e}")
+            await conn.rollback()
+        
+        print("✅ Database initialization completed successfully")

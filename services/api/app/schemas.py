@@ -56,9 +56,10 @@ class ClientProfileUpdateRequest(BaseModel):
 class AppointmentCreateRequest(BaseModel):
     client_id: int
     start_ts: datetime
-    end_ts: datetime
+    duration_minutes: int = 60
     location: Optional[dict] = None
     recurring_rule: Optional[str] = None
+    recurring_end_date: Optional[date] = None
 
 
 class AppointmentResponse(BaseModel):

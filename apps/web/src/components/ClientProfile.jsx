@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import './ClientProfile.css';
 
 const ClientProfile = ({ clientId, onBack }) => {
-  const { user, getToken } = useAuth();
+  const { user, getToken, signOut } = useAuth();
   const [client, setClient] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [goals, setGoals] = useState([]);
@@ -15,6 +15,7 @@ const ClientProfile = ({ clientId, onBack }) => {
   const [expandedSession, setExpandedSession] = useState(null);
   const [editingSession, setEditingSession] = useState(null);
   const [editSessionData, setEditSessionData] = useState(null);
+  const [showSourceSession, setShowSourceSession] = useState(null);
   
   // New session form state
   const [newSession, setNewSession] = useState({
@@ -53,9 +54,10 @@ const ClientProfile = ({ clientId, onBack }) => {
 
   const fetchClientData = async () => {
     try {
+      setLoading(true);
       const token = await getToken();
-      
-      const [profileRes, sessionsRes, goalsRes, recommendationsRes] = await Promise.all([
+
+      const [clientResponse, sessionsResponse, goalsResponse] = await Promise.all([
         fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         }),
@@ -64,35 +66,27 @@ const ClientProfile = ({ clientId, onBack }) => {
         }),
         fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/goals`, {
           headers: { 'Authorization': `Bearer ${token}` }
-        }),
-        fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/recommendations`, {
-          headers: { 'Authorization': `Bearer ${token}` }
         })
       ]);
 
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
-        setClient(profileData);
+      if (clientResponse.ok) {
+        const clientData = await clientResponse.json();
+        setClient(clientData);
       }
 
-      if (sessionsRes.ok) {
-        const sessionsData = await sessionsRes.json();
+      if (sessionsResponse.ok) {
+        const sessionsData = await sessionsResponse.json();
         setSessions(sessionsData.sessions || []);
       }
 
-      if (goalsRes.ok) {
-        const goalsData = await goalsRes.json();
+      if (goalsResponse.ok) {
+        const goalsData = await goalsResponse.json();
         setGoals(goalsData.goals || []);
       }
 
-      if (recommendationsRes.ok) {
-        const recommendationsData = await recommendationsRes.json();
-        setRecommendations(recommendationsData.recommendations || []);
-      }
-
-    } catch (err) {
+    } catch (error) {
+      console.error('Error fetching client data:', error);
       setError('Failed to load client data');
-      console.error('Error fetching client data:', err);
     } finally {
       setLoading(false);
     }
@@ -102,280 +96,18 @@ const ClientProfile = ({ clientId, onBack }) => {
     fetchClientData();
   }, [clientId]);
 
-  const generateSOAPNote = async () => {
-    const notesToUse = newSession.main_notes;
-    
-    if (!notesToUse.trim()) {
-      alert('Please enter some notes or record audio before generating SOAP note');
-      return;
-    }
-
-    setNewSession(prev => ({ ...prev, is_generating: true }));
-
-    try {
-      const formData = new FormData();
-      formData.append('transcript', notesToUse);
-      formData.append('client_age', client.dob ? new Date().getFullYear() - new Date(client.dob).getFullYear() : 0);
-      formData.append('diagnosis', client.diagnosis_codes ? client.diagnosis_codes.join(', ') : 'Not specified');
-      formData.append('short_term_goals', JSON.stringify(goals.filter(g => g.type === 'short_term').map(g => g.title)));
-      formData.append('long_term_goals', JSON.stringify(goals.filter(g => g.type === 'long_term').map(g => g.title)));
-      formData.append('session_activities', JSON.stringify([newSession.main_notes]));
-      formData.append('observations', '');
-      formData.append('time_in', newSession.start_time || '');
-      formData.append('time_out', '');
-      formData.append('units', newSession.duration_minutes || 0);
-      // Handle treatment_codes - could be string or array
-      const treatmentCodes = newSession.treatment_codes || [];
-      const treatmentCodesArray = Array.isArray(treatmentCodes) ? treatmentCodes : [treatmentCodes];
-      formData.append('treatment_codes', JSON.stringify(treatmentCodesArray));
-
-      const token = await getToken();
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/ai/generate-soap-note`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
-        body: formData
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        const soapNote = result.soap_note; // AI service returns {soap_note: {...}}
-        setNewSession(prev => ({ 
-          ...prev, 
-          notes: { 
-            ...prev.notes,
-            subjective: soapNote.subjective || '',
-            objective: soapNote.objective || '',
-            assessment: soapNote.assessment || '',
-            plan: soapNote.plan || '',
-            synthesized_summary: soapNote.synthesized_summary || '',
-            goals_addressed: soapNote.goals_addressed || [],
-            next_session_recommendations: soapNote.next_session_recommendations || [],
-            confidence_score: soapNote.confidence_score || 0.0
-          },
-          is_generating: false
-        }));
-      } else {
-        const errorText = await response.text();
-        alert(`Failed to generate SOAP note: ${response.status} ${errorText}`);
-        setNewSession(prev => ({ ...prev, is_generating: false }));
-      }
-    } catch (error) {
-      alert(`Error generating SOAP note: ${error.message}`);
-      setNewSession(prev => ({ ...prev, is_generating: false }));
-    }
+  // Helper functions
+  const calculateAge = (dob) => {
+    if (!dob) return 'N/A';
+    return `${new Date().getFullYear() - new Date(dob).getFullYear()} years`;
   };
 
-  const handleSaveSession = async () => {
-    try {
-      const token = await getToken();
-      
-      if (!newSession.start_time) {
-        alert('Please enter the start time');
-        return;
-      }
-      
-      if (!newSession.duration_minutes || newSession.duration_minutes <= 0) {
-        alert('Please enter a valid duration');
-        return;
-      }
-      
-      if (!newSession.notes.subjective && !newSession.notes.objective) {
-        alert('Please fill in at least the Subjective or Objective section');
-        return;
-      }
-
-      // Parse datetime-local input (format: "2024-01-15T14:30")
-      const startDateTime = new Date(newSession.start_time);
-      
-      if (isNaN(startDateTime.getTime())) {
-        alert('Please enter a valid start time');
-        return;
-      }
-
-      const body = {
-        client_id: parseInt(clientId),
-        start_time: startDateTime.toISOString(),
-        duration_minutes: parseInt(newSession.duration_minutes),
-        treatment_codes: [newSession.treatment_codes],
-        notes: {
-          type: 'soap',
-          soap: newSession.notes,
-          goals_checked: goals.map(g => ({ id: g.id, title: g.title, addressed: true })),
-          treatment_codes: [newSession.treatment_codes]
-        }
-      };
-
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/sessions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (resp.ok) {
-        setNewSession({
-          start_time: '',
-          duration_minutes: 60,
-          treatment_codes: '97110',
-          notes: {
-            subjective: '',
-            objective: '',
-            assessment: '',
-            plan: '',
-            synthesized_summary: '',
-            goals_addressed: [],
-            next_session_recommendations: [],
-            confidence_score: 0.0
-          },
-          main_notes: '',
-          is_generating: false
-        });
-        
-        setAudioState({
-          isRecording: false,
-          isTranscribing: false,
-          mediaRecorder: null,
-          audioChunks: [],
-          transcript: ''
-        });
-        
-        await fetchClientData();
-        alert('Session saved successfully!');
-      } else {
-        const errorText = await resp.text();
-        alert(`Failed to save session: ${resp.status} ${errorText}`);
-      }
-    } catch (e) {
-      alert('Failed to save session: ' + e.message);
-    }
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleDateString();
   };
 
-  const handleAddGoal = async () => {
-    if (newGoal.title.trim()) {
-      try {
-        const token = await getToken();
-        const response = await fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/goals`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            title: newGoal.title,
-            description: newGoal.description,
-            type: newGoal.type
-          })
-        });
-
-        if (response.ok) {
-          setNewGoal({ title: '', description: '', type: 'short_term' });
-          setShowAddGoal(false);
-          await fetchClientData();
-        } else {
-          const errorText = await response.text();
-          alert(`Failed to add goal: ${response.status} ${errorText}`);
-        }
-      } catch (error) {
-        alert('Failed to add goal');
-      }
-    }
-  };
-
-  const generateRecommendations = async () => {
-    try {
-      const token = await getToken();
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/ai/recommend/exercises`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          client_age: client.dob ? new Date().getFullYear() - new Date(client.dob).getFullYear() : 0,
-          diagnosis: client.diagnosis_codes ? client.diagnosis_codes.join(', ') : 'Not specified',
-          goals: goals.map(g => g.title)
-        })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        setRecommendations({
-          exercise_recommendations: result.exercise_recommendations || '',
-          homework_plan: result.homework_plan || ''
-        });
-      } else {
-        const errorText = await response.text();
-        alert(`Failed to generate recommendations: ${response.status} ${errorText}`);
-      }
-    } catch (error) {
-      alert('Failed to generate recommendations');
-    }
-  };
-
-  const handleEditSession = (session) => {
-    setEditingSession(session.id);
-    setEditSessionData({
-      start_time: session.start_time,
-      duration_minutes: session.duration_minutes,
-      treatment_codes: Array.isArray(session.treatment_codes) ? session.treatment_codes.join(', ') : session.treatment_codes,
-      notes: session.notes && session.notes.length > 0 ? {
-        soap: session.notes[0].soap || {}
-      } : { soap: {} }
-    });
-  };
-
-  const handleSaveEditSession = async (sessionId) => {
-    try {
-      const token = await getToken();
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/sessions/${sessionId}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(editSessionData)
-      });
-
-      if (resp.ok) {
-        setEditingSession(null);
-        setEditSessionData(null);
-        await fetchClientData();
-        alert('Session updated successfully!');
-      } else {
-        const errorText = await resp.text();
-        alert(`Failed to update session: ${resp.status} ${errorText}`);
-      }
-    } catch (e) {
-      alert('Failed to update session');
-    }
-  };
-
-  const handleDeleteSession = async (sessionId) => {
-    if (window.confirm('Are you sure you want to delete this session? This cannot be undone.')) {
-      try {
-        const token = await getToken();
-        const resp = await fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/sessions/${sessionId}`, {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-
-        if (resp.ok) {
-          await fetchClientData();
-          alert('Session deleted successfully!');
-        } else {
-          const errorText = await resp.text();
-          alert(`Failed to delete session: ${resp.status} ${errorText}`);
-        }
-      } catch (e) {
-        alert('Failed to delete session');
-      }
-    }
+  const formatTime = (timeString) => {
+    return new Date(timeString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   // Audio recording functions
@@ -454,28 +186,254 @@ const ClientProfile = ({ clientId, onBack }) => {
     }
   };
 
-  const calculateAge = (dob) => {
-    if (!dob) return 'N/A';
-    return `${new Date().getFullYear() - new Date(dob).getFullYear()} years`;
+  const generateSOAPNote = async () => {
+    const notesToUse = newSession.main_notes;
+    
+    if (!notesToUse.trim()) {
+      alert('Please enter some notes or record audio before generating SOAP note');
+      return;
+    }
+
+    setNewSession(prev => ({ ...prev, is_generating: true }));
+
+    try {
+      const formData = new FormData();
+      formData.append('transcript', notesToUse);
+      formData.append('client_age', client.dob ? new Date().getFullYear() - new Date(client.dob).getFullYear() : 0);
+      formData.append('diagnosis', client.diagnosis_codes ? client.diagnosis_codes.join(', ') : 'Not specified');
+      formData.append('short_term_goals', JSON.stringify(goals.filter(g => g.type === 'short_term').map(g => g.title)));
+      formData.append('long_term_goals', JSON.stringify(goals.filter(g => g.type === 'long_term').map(g => g.title)));
+      formData.append('session_activities', JSON.stringify([newSession.main_notes]));
+      formData.append('observations', '');
+      formData.append('time_in', newSession.start_time || '');
+      formData.append('time_out', '');
+      formData.append('units', newSession.duration_minutes || 0);
+      const treatmentCodes = newSession.treatment_codes || [];
+      const treatmentCodesArray = Array.isArray(treatmentCodes) ? treatmentCodes : [treatmentCodes];
+      formData.append('treatment_codes', JSON.stringify(treatmentCodesArray));
+
+      const token = await getToken();
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/ai/generate-soap-note`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        const soapNote = result.soap_note;
+        setNewSession(prev => ({ 
+          ...prev, 
+          notes: { 
+            ...prev.notes,
+            subjective: soapNote.subjective || '',
+            objective: soapNote.objective || '',
+            assessment: soapNote.assessment || '',
+            plan: soapNote.plan || '',
+            synthesized_summary: soapNote.synthesized_summary || '',
+            goals_addressed: soapNote.goals_addressed || [],
+            next_session_recommendations: soapNote.next_session_recommendations || [],
+            confidence_score: soapNote.confidence_score || 0.0
+          },
+          is_generating: false
+        }));
+      } else {
+        alert(`Error generating SOAP note: ${response.status}`);
+        setNewSession(prev => ({ ...prev, is_generating: false }));
+      }
+    } catch (error) {
+      alert(`Error generating SOAP note: ${error.message}`);
+      setNewSession(prev => ({ ...prev, is_generating: false }));
+    }
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString();
+  const handleSaveSession = async () => {
+    try {
+      const token = await getToken();
+      
+      if (!newSession.start_time) {
+        alert('Please enter the start time');
+        return;
+      }
+      
+      if (!newSession.duration_minutes || newSession.duration_minutes <= 0) {
+        alert('Please enter a valid duration');
+        return;
+      }
+      
+      if (!newSession.notes.subjective && !newSession.notes.objective) {
+        alert('Please fill in at least the Subjective or Objective section');
+        return;
+      }
+
+      const startDateTime = new Date(newSession.start_time);
+      
+      if (isNaN(startDateTime.getTime())) {
+        alert('Please enter a valid start time');
+        return;
+      }
+
+      const body = {
+        client_id: parseInt(clientId),
+        start_time: startDateTime.toISOString(),
+        duration_minutes: parseInt(newSession.duration_minutes),
+        treatment_codes: [newSession.treatment_codes],
+        notes: {
+          type: 'soap',
+          soap: {
+            ...newSession.notes,
+            original_notes: newSession.main_notes
+          },
+          goals_checked: goals.map(g => ({ id: g.id, title: g.title, addressed: true })),
+          treatment_codes: [newSession.treatment_codes]
+        }
+      };
+
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/sessions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (resp.ok) {
+        setNewSession({
+          start_time: '',
+          duration_minutes: 60,
+          treatment_codes: '97110',
+          notes: {
+            subjective: '',
+            objective: '',
+            assessment: '',
+            plan: '',
+            synthesized_summary: '',
+            goals_addressed: [],
+            next_session_recommendations: [],
+            confidence_score: 0.0
+          },
+          main_notes: '',
+          is_generating: false
+        });
+        
+        setAudioState({
+          isRecording: false,
+          isTranscribing: false,
+          mediaRecorder: null,
+          audioChunks: [],
+          transcript: ''
+        });
+        
+        await fetchClientData();
+        alert('Session saved successfully!');
+      } else {
+        const errorText = await resp.text();
+        alert(`Failed to save session: ${resp.status} ${errorText}`);
+      }
+    } catch (error) {
+      alert('Failed to save session');
+    }
   };
 
-  const formatTime = (timeString) => {
-    return new Date(timeString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const handleEditSession = (session) => {
+    setEditingSession(session.id);
+    setEditSessionData({
+      start_time: session.start_time,
+      duration_minutes: session.duration_minutes,
+      treatment_codes: Array.isArray(session.treatment_codes) ? session.treatment_codes.join(', ') : session.treatment_codes,
+      notes: session.notes && session.notes.length > 0 ? {
+        soap: session.notes[0].soap || {}
+      } : { soap: {} }
+    });
+  };
+
+  const handleSaveEditSession = async (sessionId) => {
+    try {
+      const token = await getToken();
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/sessions/${sessionId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(editSessionData)
+      });
+
+      if (resp.ok) {
+        setEditingSession(null);
+        setEditSessionData(null);
+        await fetchClientData();
+        alert('Session updated successfully!');
+      } else {
+        const errorText = await resp.text();
+        alert(`Failed to update session: ${resp.status} ${errorText}`);
+      }
+    } catch (e) {
+      alert('Failed to update session');
+    }
+  };
+
+  const handleDeleteSession = async (sessionId) => {
+    if (window.confirm('Are you sure you want to delete this session? This cannot be undone.')) {
+      try {
+        const token = await getToken();
+        const resp = await fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/sessions/${sessionId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+
+        if (resp.ok) {
+          await fetchClientData();
+          alert('Session deleted successfully!');
+        } else {
+          const errorText = await resp.text();
+          alert(`Failed to delete session: ${resp.status} ${errorText}`);
+        }
+      } catch (e) {
+        alert('Failed to delete session');
+      }
+    }
+  };
+
+  const handleAddGoal = async () => {
+    if (!newGoal.title.trim()) {
+      alert('Please enter a goal title');
+      return;
+    }
+
+    try {
+      const token = await getToken();
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/therapist/clients/${clientId}/goals`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(newGoal)
+      });
+
+      if (response.ok) {
+        setNewGoal({ title: '', description: '', type: 'short_term' });
+        setShowAddGoal(false);
+        await fetchClientData();
+      }
+    } catch (error) {
+      console.error('Error adding goal:', error);
+    }
   };
 
   if (loading) {
     return (
       <div className="client-profile-container" style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', padding: '24px 0', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000, overflow: 'auto' }}>
         <div className="container" style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 24px' }}>
-          <div className="profile-header" style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', marginBottom: '32px', padding: '32px', textAlign: 'center' }}>
-            <div className="loading" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '200px', color: '#6C757D', fontSize: '18px' }}>
-              <div className="spinner" style={{ width: '48px', height: '48px', border: '4px solid #F8F9FA', borderTop: '4px solid #20B2AA', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }}></div>
-              <p>Loading client profile...</p>
-            </div>
+          <div className="loading" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '200px', color: '#6C757D', fontSize: '18px' }}>
+            <div className="spinner" style={{ width: '48px', height: '48px', border: '4px solid #F8F9FA', borderTop: '4px solid #20B2AA', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }}></div>
+            <p>Loading client profile...</p>
           </div>
         </div>
       </div>
@@ -486,9 +444,9 @@ const ClientProfile = ({ clientId, onBack }) => {
     return (
       <div className="client-profile-container" style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', padding: '24px 0', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000, overflow: 'auto' }}>
         <div className="container" style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 24px' }}>
-          <div className="profile-header" style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', marginBottom: '32px', padding: '32px', textAlign: 'center' }}>
-            <div className="error" style={{ color: '#FF6B6B', fontSize: '18px' }}>{error || 'Client not found'}</div>
-            <button onClick={onBack} style={{ marginTop: '16px', padding: '8px 16px', backgroundColor: '#20B2AA', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+          <div className="error" style={{ color: '#FF6B6B', fontSize: '18px', textAlign: 'center', padding: '40px' }}>
+            {error || 'Client not found'}
+            <button onClick={onBack} style={{ marginTop: '16px', padding: '8px 16px', backgroundColor: '#20B2AA', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', display: 'block', margin: '16px auto 0' }}>
               Back to Dashboard
             </button>
           </div>
@@ -498,589 +456,925 @@ const ClientProfile = ({ clientId, onBack }) => {
   }
 
   return (
-    <div className="client-profile-container" style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', padding: '24px 0', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000, overflow: 'auto' }}>
-      <div className="container" style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 24px' }}>
-        {/* Header Section */}
-        <div className="profile-header" style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', marginBottom: '32px', padding: '32px' }}>
-          <button onClick={onBack} style={{ padding: '8px 16px', backgroundColor: 'white', border: '2px solid #20B2AA', borderRadius: '8px', color: '#20B2AA', cursor: 'pointer', fontSize: '14px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z" fill="currentColor"/>
-            </svg>
-            Back to Dashboard
-          </button>
+    <div className="client-profile-container" style={{ backgroundColor: '#F8F9FA', minHeight: '100vh', padding: '8px 0', position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000, overflow: 'auto' }}>
+      <div className="container" style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 24px' }}>
+        
+        {/* Beautiful Welcome Message - At the very top */}
+        <div style={{ 
+          textAlign: 'center', 
+          marginBottom: '24px',
+          padding: '16px 40px'
+        }}>
+          <h1 style={{ 
+            fontSize: '28px', 
+            fontWeight: '600', 
+            color: '#343A40', 
+            margin: '0',
+            background: 'linear-gradient(135deg, #20B2AA, #48D1CC)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text'
+          }}>
+            Patient Profile - {client.name}
+          </h1>
+        </div>
+
+        {/* Header with Profile Data - Matching Therapist Layout */}
+        <div className="dashboard-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '24px 40px', marginBottom: '24px' }}>
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '80px', height: '80px', background: 'linear-gradient(135deg, #20B2AA, #48D1CC)', borderRadius: '50%', color: 'white', fontSize: '32px', fontWeight: '600' }}>
-              {client.name ? client.name.charAt(0).toUpperCase() : 'C'}
-            </div>
-            <div>
-              <h1 style={{ fontSize: '32px', fontWeight: '700', color: '#343A40', margin: '0 0 8px 0' }}>{client.name}</h1>
-              <div style={{ display: 'flex', gap: '16px', fontSize: '16px', color: '#6C757D' }}>
-                <span>{calculateAge(client.dob)} years old</span>
-                <span>{client.school || 'School not specified'}</span>
-              </div>
-              <div style={{ marginTop: '8px' }}>
-                <span style={{ display: 'inline-block', padding: '4px 12px', backgroundColor: '#dcfce7', color: '#16a34a', borderRadius: '20px', fontSize: '12px', fontWeight: '500', textTransform: 'uppercase' }}>
-                  {client.status}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Profile Details Card - At Top */}
-        <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px', marginBottom: '24px' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 12C14.21 12 16 10.21 16 8C16 5.79 14.21 4 12 4C9.79 4 8 5.79 8 8C8 10.21 9.79 12 12 12ZM12 14C9.33 14 4 15.34 4 18V20H20V18C20 15.34 14.67 14 12 14Z" fill="#20B2AA"/>
-            </svg>
-            Profile Details
-          </h2>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px' }}>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Email</label>
-              <div style={{ fontSize: '14px', color: '#343A40' }}>{client.email}</div>
-            </div>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Date of Birth</label>
-              <div style={{ fontSize: '14px', color: '#343A40' }}>{new Date(client.dob).toLocaleDateString()}</div>
-            </div>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>School</label>
-              <div style={{ fontSize: '14px', color: '#343A40' }}>{client.school || 'Not specified'}</div>
-            </div>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Diagnosis</label>
-              <div style={{ fontSize: '14px', color: '#343A40' }}>
-                {client.diagnosis_codes ? client.diagnosis_codes.join(', ') : 'Not specified'}
-              </div>
-            </div>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Payer ID</label>
-              <div style={{ fontSize: '14px', color: '#343A40' }}>{client.payer_id || 'Not specified'}</div>
-            </div>
-            <div>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Created</label>
-              <div style={{ fontSize: '14px', color: '#343A40' }}>{formatDate(client.created_at)}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Session Creation - Professional Style */}
-        <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px', marginBottom: '24px' }}>
-          <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M19 13H13V19H11V13H5V11H11V5H13V11H19V13Z" fill="#20B2AA"/>
-            </svg>
-            New Session
-          </h2>
-
-          {/* Session Details Form */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Start Time</label>
-              <input
-                type="datetime-local"
-                value={newSession.start_time}
-                onChange={(e) => setNewSession(prev => ({ ...prev, start_time: e.target.value }))}
-                style={{ width: '100%', padding: '8px', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '13px' }}
-              />
-            </div>
-            
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Duration (min)</label>
-              <input
-                type="number"
-                value={newSession.duration_minutes}
-                onChange={(e) => setNewSession(prev => ({ ...prev, duration_minutes: parseInt(e.target.value) || 0 }))}
-                style={{ width: '100%', padding: '8px', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '13px' }}
-                min="15"
-                step="15"
-              />
-            </div>
-            
-            <div>
-              <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Treatment Codes</label>
-              <input
-                type="text"
-                value={newSession.treatment_codes}
-                onChange={(e) => setNewSession(prev => ({ ...prev, treatment_codes: e.target.value }))}
-                style={{ width: '100%', padding: '8px', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '13px' }}
-                placeholder="e.g., 97110"
-              />
-            </div>
-          </div>
-
-          {/* Session Notes Input */}
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '8px', textTransform: 'uppercase' }}>Session Notes</label>
-            <textarea
-              value={newSession.main_notes}
-              onChange={(e) => setNewSession(prev => ({ ...prev, main_notes: e.target.value }))}
-              style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px', minHeight: '100px' }}
-              placeholder="Enter session notes or record audio..."
-            />
-          </div>
-
-          {/* Audio Recording Controls */}
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
-            <button
-              onClick={audioState.isRecording ? stopRecording : startRecording}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: audioState.isRecording ? '#FF6B6B' : '#20B2AA',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontSize: '13px'
-              }}
-            >
-              {audioState.isRecording ? (
-                <>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="6" y="6" width="12" height="12" fill="currentColor"/>
-                  </svg>
-                  Stop Recording
-                </>
-              ) : (
-                <>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="12" cy="12" r="10" fill="currentColor"/>
-                  </svg>
-                  Start Recording
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={generateSOAPNote}
-              disabled={newSession.is_generating || !newSession.main_notes.trim()}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#20B2AA',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                opacity: (newSession.is_generating || !newSession.main_notes.trim()) ? 0.6 : 1,
-                fontSize: '13px'
-              }}
-            >
-              {newSession.is_generating ? (
-                <>
-                  <div style={{ width: '14px', height: '14px', border: '2px solid transparent', borderTop: '2px solid white', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M9 12L11 14L15 10M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" fill="currentColor"/>
-                  </svg>
-                  Generate SOAP Note
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Audio Status */}
-          {audioState.isTranscribing && (
-            <div style={{ padding: '12px', backgroundColor: '#fff3cd', borderRadius: '6px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ width: '16px', height: '16px', border: '2px solid transparent', borderTop: '2px solid #856404', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
-              <span style={{ color: '#856404', fontSize: '13px' }}>Transcribing audio...</span>
-            </div>
-          )}
-
-          {/* SOAP Note Form - Wide View */}
-          <div style={{ marginBottom: '24px' }}>
-            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#343A40', margin: '0 0 12px 0' }}>SOAP Note Form</h4>
-            
-            {newSession.is_generating ? (
-              <div style={{ textAlign: 'center', padding: '20px', color: '#6C757D' }}>
-                <div style={{ marginBottom: '12px' }}>Generating SOAP note...</div>
-                <div style={{ width: '40px', height: '40px', border: '4px solid #E2E8F0', borderTop: '4px solid #20B2AA', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto' }}></div>
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>S - Subjective</label>
-                  <textarea
-                    value={newSession.notes.subjective}
-                    onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, subjective: e.target.value } }))}
-                    style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
-                    rows={3}
-                    placeholder="What the client reported..."
-                  />
-                </div>
-                
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>O - Objective</label>
-                  <textarea
-                    value={newSession.notes.objective}
-                    onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, objective: e.target.value } }))}
-                    style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
-                    rows={3}
-                    placeholder="What you observed..."
-                  />
-                </div>
-                
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>A - Assessment</label>
-                  <textarea
-                    value={newSession.notes.assessment}
-                    onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, assessment: e.target.value } }))}
-                    style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
-                    rows={3}
-                    placeholder="Your assessment..."
-                  />
-                </div>
-                
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>P - Plan</label>
-                  <textarea
-                    value={newSession.notes.plan}
-                    onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, plan: e.target.value } }))}
-                    style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
-                    rows={3}
-                    placeholder="Next steps..."
-                  />
-                </div>
-
-                {/* AI Generated Sections - Wide View */}
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Synthesized Summary</label>
-                  <textarea
-                    value={newSession.notes.synthesized_summary}
-                    onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, synthesized_summary: e.target.value } }))}
-                    style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
-                    rows={3}
-                    placeholder="AI-generated session summary..."
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Goals Addressed</label>
-                  <textarea
-                    value={Array.isArray(newSession.notes.goals_addressed) ? newSession.notes.goals_addressed.join(', ') : (newSession.notes.goals_addressed || '')}
-                    onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, goals_addressed: e.target.value.split(',').map(g => g.trim()).filter(g => g) } }))}
-                    style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
-                    rows={2}
-                    placeholder="Goals addressed in this session..."
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Next Session Recommendations</label>
-                  <textarea
-                    value={Array.isArray(newSession.notes.next_session_recommendations) ? newSession.notes.next_session_recommendations.join(', ') : (newSession.notes.next_session_recommendations || '')}
-                    onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, next_session_recommendations: e.target.value.split(',').map(r => r.trim()).filter(r => r) } }))}
-                    style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
-                    rows={2}
-                    placeholder="Recommendations for next session..."
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Session Notes Preview - Professional Display */}
-          <div style={{ marginBottom: '24px' }}>
-            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#343A40', margin: '0 0 12px 0' }}>Session Notes Preview</h4>
-            <div style={{ fontSize: '13px', color: '#343A40', lineHeight: '1.6', padding: '16px', backgroundColor: '#F8F9FA', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-              {newSession.notes.subjective && (
-                <div style={{ marginBottom: '12px' }}>
-                  <strong style={{ color: '#20B2AA' }}>Subjective:</strong> {newSession.notes.subjective}
-                </div>
-              )}
-              {newSession.notes.objective && (
-                <div style={{ marginBottom: '12px' }}>
-                  <strong style={{ color: '#20B2AA' }}>Objective:</strong> {newSession.notes.objective}
-                </div>
-              )}
-              {newSession.notes.assessment && (
-                <div style={{ marginBottom: '12px' }}>
-                  <strong style={{ color: '#20B2AA' }}>Assessment:</strong> {newSession.notes.assessment}
-                </div>
-              )}
-              {newSession.notes.plan && (
-                <div style={{ marginBottom: '12px' }}>
-                  <strong style={{ color: '#20B2AA' }}>Plan:</strong> {newSession.notes.plan}
-                </div>
-              )}
-              {newSession.notes.synthesized_summary && (
-                <div style={{ marginBottom: '12px' }}>
-                  <strong style={{ color: '#20B2AA' }}>Summary:</strong> {newSession.notes.synthesized_summary}
-                </div>
-              )}
-              {newSession.notes.goals_addressed && newSession.notes.goals_addressed.length > 0 && (
-                <div style={{ marginBottom: '12px' }}>
-                  <strong style={{ color: '#20B2AA' }}>Goals Addressed:</strong> {Array.isArray(newSession.notes.goals_addressed) ? newSession.notes.goals_addressed.join(', ') : newSession.notes.goals_addressed}
-                </div>
-              )}
-              {newSession.notes.next_session_recommendations && newSession.notes.next_session_recommendations.length > 0 && (
-                <div style={{ marginBottom: '0' }}>
-                  <strong style={{ color: '#20B2AA' }}>Next Session:</strong> {Array.isArray(newSession.notes.next_session_recommendations) ? newSession.notes.next_session_recommendations.join(', ') : newSession.notes.next_session_recommendations}
-                </div>
-              )}
-              {(!newSession.notes.subjective && !newSession.notes.objective && !newSession.notes.assessment && !newSession.notes.plan && !newSession.notes.synthesized_summary && (!newSession.notes.goals_addressed || newSession.notes.goals_addressed.length === 0) && (!newSession.notes.next_session_recommendations || newSession.notes.next_session_recommendations.length === 0)) && (
-                <div style={{ fontStyle: 'italic', color: '#6C757D' }}>No session notes recorded yet. Use the form above to add notes or generate with AI.</div>
-              )}
-            </div>
-            
-            {/* AI Confidence Score */}
-            {newSession.notes.confidence_score && newSession.notes.confidence_score > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', padding: '8px', backgroundColor: 'white', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
-                <span style={{ fontSize: '12px', fontWeight: '600', color: '#6C757D' }}>AI Confidence:</span>
-                <span style={{ fontSize: '14px', fontWeight: '600', color: '#20B2AA' }}>
-                  {(newSession.notes.confidence_score * 100).toFixed(0)}%
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Save Button */}
-          <button
-            onClick={handleSaveSession}
-            disabled={!newSession.start_time || (!newSession.notes.subjective && !newSession.notes.objective)}
-            style={{
-              padding: '10px 20px',
-              backgroundColor: '#20B2AA',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '600',
-              opacity: (!newSession.start_time || (!newSession.notes.subjective && !newSession.notes.objective)) ? 0.6 : 1
-            }}
-          >
-            Save Session
-          </button>
-        </div>
-
-        {/* Session History */}
-        <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px', marginBottom: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
-            <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Left Side - Back Button */}
+          <div style={{ flex: 1 }}>
+            <button onClick={onBack} style={{ 
+              padding: '12px 20px', 
+              backgroundColor: 'white', 
+              border: '2px solid #20B2AA', 
+              borderRadius: '8px', 
+              color: '#20B2AA', 
+              cursor: 'pointer', 
+              fontSize: '14px', 
+              fontWeight: '600', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '8px'
+            }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M13 2.05V4.05C17.39 4.59 20.5 8.58 19.96 12.97C19.5 16.61 16.64 19.5 13 19.93V21.93C18.5 21.38 22.5 16.5 21.95 11C21.5 6.25 17.73 2.5 13 2.03V2.05Z" fill="#20B2AA"/>
+                <path d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z" fill="currentColor"/>
               </svg>
-              Session History ({sessions.length})
-            </h2>
-            {sessions.length > 5 && (
-              <button onClick={() => setShowAllSessions(!showAllSessions)} style={{ padding: '6px 12px', backgroundColor: 'white', border: '2px solid #20B2AA', borderRadius: '6px', color: '#20B2AA', fontSize: '12px', cursor: 'pointer' }}>
-                {showAllSessions ? 'Show Less' : 'Show All'}
-              </button>
-            )}
+              Back to Dashboard
+            </button>
           </div>
+
+          {/* Center - Profile Data in Wide View */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '32px', flex: 2, justifyContent: 'center' }}>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              width: '64px', 
+              height: '64px', 
+              background: 'linear-gradient(135deg, #20B2AA, #48D1CC)', 
+              borderRadius: '16px', 
+              color: 'white', 
+              fontSize: '24px', 
+              fontWeight: '700',
+              boxShadow: '0 4px 12px rgba(32, 178, 170, 0.3)'
+            }}>
+              {client.name ? client.name.charAt(0).toUpperCase() : 'P'}
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px', alignItems: 'center', minWidth: '600px' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '16px', fontWeight: '700', color: '#343A40', marginBottom: '4px' }}>
+                  {client.name}
+                </div>
+                <div style={{ fontSize: '12px', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Patient Name
+                </div>
+              </div>
+              
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '16px', fontWeight: '700', color: '#343A40', marginBottom: '4px' }}>
+                  {calculateAge(client.dob)}
+                </div>
+                <div style={{ fontSize: '12px', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Age
+                </div>
+              </div>
+              
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '16px', fontWeight: '700', color: '#343A40', marginBottom: '4px' }}>
+                  {client.school || 'Not specified'}
+                </div>
+                <div style={{ fontSize: '12px', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  School
+                </div>
+              </div>
+              
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '16px', fontWeight: '700', color: '#343A40', marginBottom: '4px' }}>
+                  {client.status}
+                </div>
+                <div style={{ fontSize: '12px', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Status
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Side - Sign Out Button */}
+          <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
+            <button 
+              onClick={async () => {
+                try {
+                  await signOut();
+                } catch (error) {
+                  console.error('Sign-out error:', error);
+                }
+              }}
+              style={{ 
+                padding: '12px 20px',
+                backgroundColor: '#FF6B6B',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '600',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M17 7L15.59 8.41L18.17 11H8V13H18.17L15.59 15.59L17 17L22 12L17 7ZM4 5H12V3H4C2.9 3 2 3.9 2 5V19C2 20.1 2.9 21 4 21H12V19H4V5Z" fill="currentColor"/>
+              </svg>
+              Sign Out
+            </button>
+          </div>
+        </div>
+
+        {/* Main Content - 2 Column Layout */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', alignItems: 'start' }}>
           
-          <div style={{ maxHeight: showAllSessions ? 'none' : '400px', overflowY: showAllSessions ? 'visible' : 'auto' }}>
-            {sessions.length > 0 ? (
-              (showAllSessions ? sessions : sessions.slice(0, 5)).map((session, index) => (
-                <div key={session.id || index} style={{ marginBottom: '12px', border: '1px solid #E2E8F0', borderRadius: '8px', overflow: 'hidden' }}>
-                  {/* Session Header - Clickable */}
-                  <div 
-                    onClick={() => setExpandedSession(expandedSession === session.id ? null : session.id)}
-                    style={{ 
-                      padding: '12px', 
-                      backgroundColor: '#F8F9FA', 
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      borderBottom: expandedSession === session.id ? '1px solid #E2E8F0' : 'none',
-                      transition: 'background-color 150ms ease-in-out'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: '500', color: '#343A40', marginBottom: '4px' }}>Session {sessions.length - index}</div>
-                      <div style={{ fontSize: '12px', color: '#6C757D' }}>
-                        {formatDate(session.created_at)} • {formatTime(session.start_time)} • {session.duration_minutes} min
-                      </div>
-                      {session.treatment_codes && (
-                        <div style={{ fontSize: '10px', color: '#6C757D', marginTop: '2px' }}>
-                          Codes: {Array.isArray(session.treatment_codes) ? session.treatment_codes.join(', ') : session.treatment_codes}
-                        </div>
-                      )}
-                    </div>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ transform: expandedSession === session.id ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 150ms ease-in-out' }}>
-                      <path d="M7 10L12 15L17 10H7Z" fill="#6C757D"/>
-                    </svg>
+          {/* Left Column - Session Widgets */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            
+            {/* Session Creation Widget */}
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M19 13H13V19H11V13H5V11H11V5H13V11H19V13Z" fill="#20B2AA"/>
+                </svg>
+                New Session
+              </h2>
+
+              {/* Session Form */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Start Time</label>
+                  <input
+                    type="datetime-local"
+                    value={newSession.start_time}
+                    onChange={(e) => setNewSession(prev => ({ ...prev, start_time: e.target.value }))}
+                    style={{ width: '100%', padding: '8px', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '13px' }}
+                  />
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Duration (min)</label>
+                  <input
+                    type="number"
+                    value={newSession.duration_minutes}
+                    onChange={(e) => setNewSession(prev => ({ ...prev, duration_minutes: parseInt(e.target.value) || 0 }))}
+                    style={{ width: '100%', padding: '8px', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '13px' }}
+                    min="15"
+                    step="15"
+                  />
+                </div>
+                
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Treatment Codes</label>
+                  <input
+                    type="text"
+                    value={newSession.treatment_codes}
+                    onChange={(e) => setNewSession(prev => ({ ...prev, treatment_codes: e.target.value }))}
+                    style={{ width: '100%', padding: '8px', border: '1px solid #E2E8F0', borderRadius: '4px', fontSize: '13px' }}
+                    placeholder="e.g., 97110"
+                  />
+                </div>
+              </div>
+
+              {/* Session Notes Input */}
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '8px', textTransform: 'uppercase' }}>Session Notes</label>
+                <textarea
+                  value={newSession.main_notes}
+                  onChange={(e) => setNewSession(prev => ({ ...prev, main_notes: e.target.value }))}
+                  style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px', minHeight: '100px' }}
+                  placeholder="Enter session notes or record audio..."
+                />
+              </div>
+
+              {/* Audio Recording Controls */}
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
+                <button
+                  onClick={audioState.isRecording ? stopRecording : startRecording}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: audioState.isRecording ? '#FF6B6B' : '#20B2AA',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '13px'
+                  }}
+                >
+                  {audioState.isRecording ? (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="6" y="6" width="12" height="12" fill="currentColor"/>
+                      </svg>
+                      Stop Recording
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="12" cy="12" r="10" fill="currentColor"/>
+                      </svg>
+                      Start Recording
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={generateSOAPNote}
+                  disabled={newSession.is_generating || !newSession.main_notes.trim()}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#20B2AA',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    opacity: (newSession.is_generating || !newSession.main_notes.trim()) ? 0.6 : 1,
+                    fontSize: '13px'
+                  }}
+                >
+                  {newSession.is_generating ? (
+                    <>
+                      <div style={{ width: '14px', height: '14px', border: '2px solid transparent', borderTop: '2px solid white', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9 12L11 14L15 10M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" fill="currentColor"/>
+                      </svg>
+                      Generate SOAP Note
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Audio Status */}
+              {audioState.isTranscribing && (
+                <div style={{ padding: '12px', backgroundColor: '#fff3cd', borderRadius: '6px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ width: '16px', height: '16px', border: '2px solid transparent', borderTop: '2px solid #856404', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+                  <span style={{ color: '#856404', fontSize: '13px' }}>Transcribing audio...</span>
+                </div>
+              )}
+
+              {/* SOAP Note Form */}
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#343A40', margin: '0 0 12px 0' }}>SOAP Note Form</h4>
+                
+                {newSession.is_generating ? (
+                  <div style={{ textAlign: 'center', padding: '20px', color: '#6C757D' }}>
+                    <div style={{ marginBottom: '12px' }}>Generating SOAP note...</div>
+                    <div style={{ width: '40px', height: '40px', border: '4px solid #E2E8F0', borderTop: '4px solid #20B2AA', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto' }}></div>
                   </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>S - Subjective</label>
+                      <textarea
+                        value={newSession.notes.subjective}
+                        onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, subjective: e.target.value } }))}
+                        style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
+                        rows={3}
+                        placeholder="What the client reported..."
+                      />
+                    </div>
+                    
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>O - Objective</label>
+                      <textarea
+                        value={newSession.notes.objective}
+                        onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, objective: e.target.value } }))}
+                        style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
+                        rows={3}
+                        placeholder="What you observed..."
+                      />
+                    </div>
+                    
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>A - Assessment</label>
+                      <textarea
+                        value={newSession.notes.assessment}
+                        onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, assessment: e.target.value } }))}
+                        style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
+                        rows={3}
+                        placeholder="Your assessment..."
+                      />
+                    </div>
+                    
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>P - Plan</label>
+                      <textarea
+                        value={newSession.notes.plan}
+                        onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, plan: e.target.value } }))}
+                        style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
+                        rows={3}
+                        placeholder="Next steps..."
+                      />
+                    </div>
 
-                  {/* Expanded Session Details */}
-                  {expandedSession === session.id && (
-                    <div style={{ padding: '16px', backgroundColor: 'white' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-                        <div>
-                          <label style={{ fontSize: '10px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Start Time</label>
-                          <div style={{ fontSize: '12px', color: '#343A40' }}>{formatTime(session.start_time)}</div>
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '10px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Duration</label>
-                          <div style={{ fontSize: '12px', color: '#343A40' }}>{session.duration_minutes} min</div>
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '10px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Treatment Codes</label>
-                          <div style={{ fontSize: '12px', color: '#343A40' }}>
-                            {Array.isArray(session.treatment_codes) ? session.treatment_codes.join(', ') : (session.treatment_codes || 'N/A')}
-                          </div>
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '10px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Status</label>
-                          <div style={{ fontSize: '12px', color: '#343A40' }}>{session.note_status || 'draft'}</div>
-                        </div>
-                      </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Synthesized Summary</label>
+                      <textarea
+                        value={newSession.notes.synthesized_summary}
+                        onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, synthesized_summary: e.target.value } }))}
+                        style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
+                        rows={3}
+                        placeholder="AI-generated session summary..."
+                      />
+                    </div>
 
-                      {/* Session Notes Display */}
-                      {session.notes && session.notes.length > 0 && session.notes[0].soap && (
-                        <div style={{ marginBottom: '16px' }}>
-                          <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#343A40', margin: '0 0 12px 0' }}>Session Notes</h4>
-                          <div style={{ fontSize: '13px', color: '#343A40', lineHeight: '1.6', padding: '16px', backgroundColor: '#F8F9FA', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
-                            {session.notes[0].soap.subjective && (
-                              <div style={{ marginBottom: '12px' }}>
-                                <strong style={{ color: '#20B2AA' }}>Subjective:</strong> {session.notes[0].soap.subjective}
-                              </div>
-                            )}
-                            {session.notes[0].soap.objective && (
-                              <div style={{ marginBottom: '12px' }}>
-                                <strong style={{ color: '#20B2AA' }}>Objective:</strong> {session.notes[0].soap.objective}
-                              </div>
-                            )}
-                            {session.notes[0].soap.assessment && (
-                              <div style={{ marginBottom: '12px' }}>
-                                <strong style={{ color: '#20B2AA' }}>Assessment:</strong> {session.notes[0].soap.assessment}
-                              </div>
-                            )}
-                            {session.notes[0].soap.plan && (
-                              <div style={{ marginBottom: '12px' }}>
-                                <strong style={{ color: '#20B2AA' }}>Plan:</strong> {session.notes[0].soap.plan}
-                              </div>
-                            )}
-                            {session.notes[0].soap.synthesized_summary && (
-                              <div style={{ marginBottom: '12px' }}>
-                                <strong style={{ color: '#20B2AA' }}>Summary:</strong> {session.notes[0].soap.synthesized_summary}
-                              </div>
-                            )}
-                            {session.notes[0].soap.goals_addressed && session.notes[0].soap.goals_addressed.length > 0 && (
-                              <div style={{ marginBottom: '12px' }}>
-                                <strong style={{ color: '#20B2AA' }}>Goals Addressed:</strong> {Array.isArray(session.notes[0].soap.goals_addressed) ? session.notes[0].soap.goals_addressed.join(', ') : session.notes[0].soap.goals_addressed}
-                              </div>
-                            )}
-                            {session.notes[0].soap.next_session_recommendations && session.notes[0].soap.next_session_recommendations.length > 0 && (
-                              <div style={{ marginBottom: '0' }}>
-                                <strong style={{ color: '#20B2AA' }}>Next Session:</strong> {Array.isArray(session.notes[0].soap.next_session_recommendations) ? session.notes[0].soap.next_session_recommendations.join(', ') : session.notes[0].soap.next_session_recommendations}
-                              </div>
-                            )}
-                            {(!session.notes[0].soap.subjective && !session.notes[0].soap.objective && !session.notes[0].soap.assessment && !session.notes[0].soap.plan) && (
-                              <div style={{ fontStyle: 'italic', color: '#6C757D' }}>No session notes recorded</div>
-                            )}
-                          </div>
-                        </div>
-                      )}
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Goals Addressed</label>
+                      <textarea
+                        value={Array.isArray(newSession.notes.goals_addressed) ? newSession.notes.goals_addressed.join(', ') : (newSession.notes.goals_addressed || '')}
+                        onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, goals_addressed: e.target.value.split(',').map(g => g.trim()).filter(g => g) } }))}
+                        style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
+                        rows={2}
+                        placeholder="Goals addressed in this session..."
+                      />
+                    </div>
 
-                      {/* Actions */}
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleEditSession(session);
-                          }}
-                          style={{ padding: '6px 12px', backgroundColor: 'white', border: '2px solid #20B2AA', borderRadius: '4px', color: '#20B2AA', fontSize: '12px', cursor: 'pointer' }}
-                        >
-                          Edit
-                        </button>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteSession(session.id);
-                          }}
-                          style={{ padding: '6px 12px', backgroundColor: '#FF6B6B', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}
-                        >
-                          Delete
-                        </button>
-                      </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Next Session Recommendations</label>
+                      <textarea
+                        value={Array.isArray(newSession.notes.next_session_recommendations) ? newSession.notes.next_session_recommendations.join(', ') : (newSession.notes.next_session_recommendations || '')}
+                        onChange={(e) => setNewSession(prev => ({ ...prev, notes: { ...prev.notes, next_session_recommendations: e.target.value.split(',').map(r => r.trim()).filter(r => r) } }))}
+                        style={{ width: '100%', padding: '12px', border: '1px solid #E2E8F0', borderRadius: '6px', resize: 'vertical', fontSize: '13px' }}
+                        rows={2}
+                        placeholder="Recommendations for next session..."
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Session Notes Preview */}
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#343A40', margin: '0 0 12px 0' }}>Session Notes Preview</h4>
+                <div style={{ fontSize: '13px', color: '#343A40', lineHeight: '1.6', padding: '16px', backgroundColor: '#F8F9FA', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                  {newSession.main_notes && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <strong style={{ color: '#20B2AA' }}>Session Notes:</strong> {newSession.main_notes}
                     </div>
                   )}
+                  {newSession.notes.subjective && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <strong style={{ color: '#20B2AA' }}>Subjective:</strong> {newSession.notes.subjective}
+                    </div>
+                  )}
+                  {newSession.notes.objective && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <strong style={{ color: '#20B2AA' }}>Objective:</strong> {newSession.notes.objective}
+                    </div>
+                  )}
+                  {newSession.notes.assessment && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <strong style={{ color: '#20B2AA' }}>Assessment:</strong> {newSession.notes.assessment}
+                    </div>
+                  )}
+                  {newSession.notes.plan && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <strong style={{ color: '#20B2AA' }}>Plan:</strong> {newSession.notes.plan}
+                    </div>
+                  )}
+                  {newSession.notes.synthesized_summary && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <strong style={{ color: '#20B2AA' }}>Summary:</strong> {newSession.notes.synthesized_summary}
+                    </div>
+                  )}
+                  {newSession.notes.goals_addressed && newSession.notes.goals_addressed.length > 0 && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <strong style={{ color: '#20B2AA' }}>Goals Addressed:</strong> {Array.isArray(newSession.notes.goals_addressed) ? newSession.notes.goals_addressed.join(', ') : newSession.notes.goals_addressed}
+                    </div>
+                  )}
+                  {newSession.notes.next_session_recommendations && newSession.notes.next_session_recommendations.length > 0 && (
+                    <div style={{ marginBottom: '0' }}>
+                      <strong style={{ color: '#20B2AA' }}>Next Session:</strong> {Array.isArray(newSession.notes.next_session_recommendations) ? newSession.notes.next_session_recommendations.join(', ') : newSession.notes.next_session_recommendations}
+                    </div>
+                  )}
+                  {(!newSession.main_notes && !newSession.notes.subjective && !newSession.notes.objective && !newSession.notes.assessment && !newSession.notes.plan && !newSession.notes.synthesized_summary && (!newSession.notes.goals_addressed || newSession.notes.goals_addressed.length === 0) && (!newSession.notes.next_session_recommendations || newSession.notes.next_session_recommendations.length === 0)) && (
+                    <div style={{ fontStyle: 'italic', color: '#6C757D' }}>No session notes recorded yet. Use the form above to add notes or generate with AI.</div>
+                  )}
                 </div>
-              ))
-            ) : (
-              <div style={{ textAlign: 'center', padding: '20px', color: '#6C757D' }}>No sessions yet</div>
-            )}
-          </div>
-        </div>
-
-        {/* Goals and Recommendations */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '24px' }}>
-          {/* Goals Card */}
-          <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
-              <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 2L13.09 8.26L20 9L13.09 9.74L12 16L10.91 9.74L4 9L10.91 8.26L12 2Z" fill="#20B2AA"/>
-                </svg>
-                Goals
-              </h2>
-              <button onClick={() => setShowAddGoal(true)} style={{ padding: '6px 12px', backgroundColor: '#20B2AA', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>
-                Add Goal
-              </button>
-            </div>
-            
-            <div>
-              {goals.length > 0 ? (
-                goals.slice(0, 5).map((goal, index) => (
-                  <div key={goal.id || index} style={{ padding: '12px', backgroundColor: '#F8F9FA', borderRadius: '8px', marginBottom: '8px' }}>
-                    <div style={{ fontWeight: '500', color: '#343A40', marginBottom: '4px' }}>{goal.title}</div>
-                    <div style={{ fontSize: '12px', color: '#6C757D' }}>{goal.type}</div>
+                
+                {/* AI Confidence Score */}
+                {newSession.notes.confidence_score && newSession.notes.confidence_score > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', padding: '8px', backgroundColor: 'white', borderRadius: '6px', border: '1px solid #E2E8F0' }}>
+                    <span style={{ fontSize: '12px', fontWeight: '600', color: '#6C757D' }}>AI Confidence:</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#20B2AA' }}>
+                      {(newSession.notes.confidence_score * 100).toFixed(0)}%
+                    </span>
                   </div>
-                ))
-              ) : (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#6C757D' }}>No goals yet</div>
-              )}
+                )}
+              </div>
+
+              {/* Save Button */}
+              <button
+                onClick={handleSaveSession}
+                disabled={!newSession.start_time || (!newSession.notes.subjective && !newSession.notes.objective)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#20B2AA',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  opacity: (!newSession.start_time || (!newSession.notes.subjective && !newSession.notes.objective)) ? 0.6 : 1
+                }}
+              >
+                Save Session
+              </button>
             </div>
+
           </div>
 
-          {/* Recommendations */}
-          <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
-              <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Right Column - Goals and Recommendations */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            
+            {/* Session History Widget */}
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
+                <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M13 2.05V4.05C17.39 4.59 20.5 8.58 19.96 12.97C19.5 16.61 16.64 19.5 13 19.93V21.93C18.5 21.38 22.5 16.5 21.95 11C21.5 6.25 17.73 2.5 13 2.03V2.05Z" fill="#20B2AA"/>
+                  </svg>
+                  Session History ({sessions.length})
+                </h2>
+                {sessions.length > 5 && (
+                  <button onClick={() => setShowAllSessions(!showAllSessions)} style={{ padding: '6px 12px', backgroundColor: 'white', border: '2px solid #20B2AA', borderRadius: '6px', color: '#20B2AA', fontSize: '12px', cursor: 'pointer' }}>
+                    {showAllSessions ? 'Show Less' : 'Show All'}
+                  </button>
+                )}
+              </div>
+              
+              <div style={{ maxHeight: showAllSessions ? 'none' : '400px', overflowY: showAllSessions ? 'visible' : 'auto' }}>
+                {sessions.length > 0 ? (
+                  (showAllSessions ? sessions : sessions.slice(0, 5)).map((session, index) => (
+                    <div key={session.id || index} style={{ marginBottom: '12px', border: '1px solid #E2E8F0', borderRadius: '8px', overflow: 'hidden' }}>
+                      {/* Session Header */}
+                      <div 
+                        onClick={() => setExpandedSession(expandedSession === session.id ? null : session.id)}
+                        style={{ 
+                          padding: '12px', 
+                          backgroundColor: '#F8F9FA', 
+                          cursor: 'pointer',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          borderBottom: expandedSession === session.id ? '1px solid #E2E8F0' : 'none'
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: '600', color: '#343A40' }}>
+                            {formatDate(session.start_time)} - {formatTime(session.start_time)}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#6C757D' }}>
+                            {session.duration_minutes} min • {Array.isArray(session.treatment_codes) ? session.treatment_codes.join(', ') : session.treatment_codes}
+                          </div>
+                        </div>
+                        <svg 
+                          width="16" 
+                          height="16" 
+                          viewBox="0 0 24 24" 
+                          fill="none" 
+                          xmlns="http://www.w3.org/2000/svg"
+                          style={{ 
+                            transform: expandedSession === session.id ? 'rotate(180deg)' : 'rotate(0deg)',
+                            transition: 'transform 0.2s ease'
+                          }}
+                        >
+                          <path d="M7 10L12 15L17 10H7Z" fill="currentColor"/>
+                        </svg>
+                      </div>
+
+                      {/* Session Details */}
+                      {expandedSession === session.id && (
+                        <div style={{ padding: '16px', backgroundColor: 'white' }}>
+                          {/* Session Info */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+                            <div>
+                              <label style={{ fontSize: '10px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Start Time</label>
+                              <div style={{ fontSize: '12px', color: '#343A40' }}>{formatTime(session.start_time)}</div>
+                            </div>
+                            <div>
+                              <label style={{ fontSize: '10px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Duration</label>
+                              <div style={{ fontSize: '12px', color: '#343A40' }}>{session.duration_minutes} min</div>
+                            </div>
+                            <div>
+                              <label style={{ fontSize: '10px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase' }}>Status</label>
+                              <div style={{ fontSize: '12px', color: '#343A40' }}>{session.note_status || 'draft'}</div>
+                            </div>
+                          </div>
+
+                          {/* SOAP Notes Display/Edit */}
+                          {editingSession === session.id ? (
+                            /* Edit Mode */
+                            <div style={{ marginBottom: '16px' }}>
+                              <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#343A40', margin: '0 0 12px 0' }}>Edit Session Details</h4>
+                              
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+                                <div>
+                                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px' }}>Start Time</label>
+                                  <input 
+                                    type="datetime-local"
+                                    value={editSessionData?.start_time ? new Date(editSessionData.start_time).toISOString().slice(0, 16) : ''}
+                                    onChange={(e) => setEditSessionData(prev => ({ ...prev, start_time: e.target.value }))}
+                                    style={{ width: '100%', padding: '6px', border: '2px solid #E2E8F0', borderRadius: '4px', fontSize: '12px' }}
+                                  />
+                                </div>
+                                <div>
+                                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px' }}>Duration (min)</label>
+                                  <input 
+                                    type="number"
+                                    value={editSessionData?.duration_minutes || ''}
+                                    onChange={(e) => setEditSessionData(prev => ({ ...prev, duration_minutes: e.target.value }))}
+                                    style={{ width: '100%', padding: '6px', border: '2px solid #E2E8F0', borderRadius: '4px', fontSize: '12px' }}
+                                    min="15"
+                                    step="15"
+                                  />
+                                </div>
+                                <div>
+                                  <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px' }}>Treatment Codes</label>
+                                  <input 
+                                    type="text"
+                                    value={editSessionData?.treatment_codes || ''}
+                                    onChange={(e) => setEditSessionData(prev => ({ ...prev, treatment_codes: e.target.value }))}
+                                    style={{ width: '100%', padding: '6px', border: '2px solid #E2E8F0', borderRadius: '4px', fontSize: '12px' }}
+                                    placeholder="e.g., 97110, 97165"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* SOAP Notes Edit - Full Width Layout */}
+                              {session.notes && session.notes.length > 0 && session.notes[0].soap && (
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>S - Subjective</label>
+                                    <textarea
+                                      value={editSessionData?.notes?.soap?.subjective || ''}
+                                      onChange={(e) => setEditSessionData(prev => ({ 
+                                        ...prev, 
+                                        notes: { 
+                                          ...prev.notes, 
+                                          soap: { 
+                                            ...prev.notes?.soap, 
+                                            subjective: e.target.value 
+                                          } 
+                                        } 
+                                      }))}
+                                      style={{ width: '100%', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '8px', resize: 'vertical', fontSize: '14px', lineHeight: '1.6' }}
+                                      rows={4}
+                                      placeholder="What the client reported..."
+                                    />
+                                  </div>
+                                  
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>O - Objective</label>
+                                    <textarea
+                                      value={editSessionData?.notes?.soap?.objective || ''}
+                                      onChange={(e) => setEditSessionData(prev => ({ 
+                                        ...prev, 
+                                        notes: { 
+                                          ...prev.notes, 
+                                          soap: { 
+                                            ...prev.notes?.soap, 
+                                            objective: e.target.value 
+                                          } 
+                                        } 
+                                      }))}
+                                      style={{ width: '100%', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '8px', resize: 'vertical', fontSize: '14px', lineHeight: '1.6' }}
+                                      rows={4}
+                                      placeholder="What you observed..."
+                                    />
+                                  </div>
+                                  
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>A - Assessment</label>
+                                    <textarea
+                                      value={editSessionData?.notes?.soap?.assessment || ''}
+                                      onChange={(e) => setEditSessionData(prev => ({ 
+                                        ...prev, 
+                                        notes: { 
+                                          ...prev.notes, 
+                                          soap: { 
+                                            ...prev.notes?.soap, 
+                                            assessment: e.target.value 
+                                          } 
+                                        } 
+                                      }))}
+                                      style={{ width: '100%', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '8px', resize: 'vertical', fontSize: '14px', lineHeight: '1.6' }}
+                                      rows={4}
+                                      placeholder="Your assessment..."
+                                    />
+                                  </div>
+                                  
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>P - Plan</label>
+                                    <textarea
+                                      value={editSessionData?.notes?.soap?.plan || ''}
+                                      onChange={(e) => setEditSessionData(prev => ({ 
+                                        ...prev, 
+                                        notes: { 
+                                          ...prev.notes, 
+                                          soap: { 
+                                            ...prev.notes?.soap, 
+                                            plan: e.target.value 
+                                          } 
+                                        } 
+                                      }))}
+                                      style={{ width: '100%', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '8px', resize: 'vertical', fontSize: '14px', lineHeight: '1.6' }}
+                                      rows={4}
+                                      placeholder="Next steps..."
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Synthesized Summary</label>
+                                    <textarea
+                                      value={editSessionData?.notes?.soap?.synthesized_summary || ''}
+                                      onChange={(e) => setEditSessionData(prev => ({ 
+                                        ...prev, 
+                                        notes: { 
+                                          ...prev.notes, 
+                                          soap: { 
+                                            ...prev.notes?.soap, 
+                                            synthesized_summary: e.target.value 
+                                          } 
+                                        } 
+                                      }))}
+                                      style={{ width: '100%', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '8px', resize: 'vertical', fontSize: '14px', lineHeight: '1.6' }}
+                                      rows={4}
+                                      placeholder="AI-generated session summary..."
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Goals Addressed</label>
+                                    <textarea
+                                      value={Array.isArray(editSessionData?.notes?.soap?.goals_addressed) ? editSessionData.notes.soap.goals_addressed.join(', ') : (editSessionData?.notes?.soap?.goals_addressed || '')}
+                                      onChange={(e) => setEditSessionData(prev => ({ 
+                                        ...prev, 
+                                        notes: { 
+                                          ...prev.notes, 
+                                          soap: { 
+                                            ...prev.notes?.soap, 
+                                            goals_addressed: e.target.value.split(',').map(g => g.trim()).filter(g => g)
+                                          } 
+                                        } 
+                                      }))}
+                                      style={{ width: '100%', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '8px', resize: 'vertical', fontSize: '14px', lineHeight: '1.6' }}
+                                      rows={3}
+                                      placeholder="Goals addressed in this session..."
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Next Session Recommendations</label>
+                                    <textarea
+                                      value={Array.isArray(editSessionData?.notes?.soap?.next_session_recommendations) ? editSessionData.notes.soap.next_session_recommendations.join(', ') : (editSessionData?.notes?.soap?.next_session_recommendations || '')}
+                                      onChange={(e) => setEditSessionData(prev => ({ 
+                                        ...prev, 
+                                        notes: { 
+                                          ...prev.notes, 
+                                          soap: { 
+                                            ...prev.notes?.soap, 
+                                            next_session_recommendations: e.target.value.split(',').map(r => r.trim()).filter(r => r)
+                                          } 
+                                        } 
+                                      }))}
+                                      style={{ width: '100%', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '8px', resize: 'vertical', fontSize: '14px', lineHeight: '1.6' }}
+                                      rows={3}
+                                      placeholder="Recommendations for next session..."
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px', textTransform: 'uppercase' }}>Original Session Notes</label>
+                                    <textarea
+                                      value={editSessionData?.notes?.soap?.original_notes || ''}
+                                      onChange={(e) => setEditSessionData(prev => ({ 
+                                        ...prev, 
+                                        notes: { 
+                                          ...prev.notes, 
+                                          soap: { 
+                                            ...prev.notes?.soap, 
+                                            original_notes: e.target.value 
+                                          } 
+                                        } 
+                                      }))}
+                                      style={{ width: '100%', padding: '16px', border: '1px solid #E2E8F0', borderRadius: '8px', resize: 'vertical', fontSize: '14px', lineHeight: '1.6' }}
+                                      rows={5}
+                                      placeholder="Original session notes or audio transcript..."
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            /* View Mode */
+                            session.notes && session.notes.length > 0 && session.notes[0].soap && (
+                              <div style={{ marginBottom: '16px' }}>
+                                <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#343A40', margin: '0 0 12px 0' }}>Session Notes</h4>
+                                <div style={{ fontSize: '13px', color: '#343A40', lineHeight: '1.6', padding: '16px', backgroundColor: '#F8F9FA', borderRadius: '8px', border: '1px solid #E2E8F0' }}>
+                                  {session.notes[0].soap.subjective && (
+                                    <div style={{ marginBottom: '12px' }}>
+                                      <strong style={{ color: '#20B2AA' }}>Subjective:</strong> {session.notes[0].soap.subjective}
+                                    </div>
+                                  )}
+                                  {session.notes[0].soap.objective && (
+                                    <div style={{ marginBottom: '12px' }}>
+                                      <strong style={{ color: '#20B2AA' }}>Objective:</strong> {session.notes[0].soap.objective}
+                                    </div>
+                                  )}
+                                  {session.notes[0].soap.assessment && (
+                                    <div style={{ marginBottom: '12px' }}>
+                                      <strong style={{ color: '#20B2AA' }}>Assessment:</strong> {session.notes[0].soap.assessment}
+                                    </div>
+                                  )}
+                                  {session.notes[0].soap.plan && (
+                                    <div style={{ marginBottom: '12px' }}>
+                                      <strong style={{ color: '#20B2AA' }}>Plan:</strong> {session.notes[0].soap.plan}
+                                    </div>
+                                  )}
+                                  {session.notes[0].soap.synthesized_summary && (
+                                    <div style={{ marginBottom: '12px' }}>
+                                      <strong style={{ color: '#20B2AA' }}>Summary:</strong> {session.notes[0].soap.synthesized_summary}
+                                    </div>
+                                  )}
+                                  {session.notes[0].soap.goals_addressed && session.notes[0].soap.goals_addressed.length > 0 && (
+                                    <div style={{ marginBottom: '12px' }}>
+                                      <strong style={{ color: '#20B2AA' }}>Goals Addressed:</strong> {Array.isArray(session.notes[0].soap.goals_addressed) ? session.notes[0].soap.goals_addressed.join(', ') : session.notes[0].soap.goals_addressed}
+                                    </div>
+                                  )}
+                                  {session.notes[0].soap.next_session_recommendations && session.notes[0].soap.next_session_recommendations.length > 0 && (
+                                    <div style={{ marginBottom: '0' }}>
+                                      <strong style={{ color: '#20B2AA' }}>Next Session:</strong> {Array.isArray(session.notes[0].soap.next_session_recommendations) ? session.notes[0].soap.next_session_recommendations.join(', ') : session.notes[0].soap.next_session_recommendations}
+                                    </div>
+                                  )}
+                                  {(!session.notes[0].soap.subjective && !session.notes[0].soap.objective && !session.notes[0].soap.assessment && !session.notes[0].soap.plan) && (
+                                    <div style={{ fontStyle: 'italic', color: '#6C757D' }}>No session notes recorded</div>
+                                  )}
+                                </div>
+                              </div>
+                            )
+                          )}
+
+                          {/* Show Source Section */}
+                          {showSourceSession === session.id && session.notes && session.notes[0] && session.notes[0].soap && session.notes[0].soap.original_notes && (
+                            <div style={{ marginTop: '12px', padding: '12px', backgroundColor: '#FFF3E0', borderRadius: '6px', border: '1px solid #FFB74D' }}>
+                              <h5 style={{ fontSize: '13px', fontWeight: '600', color: '#F57C00', margin: '0 0 8px 0', textTransform: 'uppercase' }}>
+                                Original Session Notes
+                              </h5>
+                              <div style={{ fontSize: '13px', color: '#343A40', lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>
+                                {session.notes[0].soap.original_notes}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Actions */}
+                          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            {session.notes && session.notes[0] && session.notes[0].soap && session.notes[0].soap.original_notes && (
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setShowSourceSession(showSourceSession === session.id ? null : session.id);
+                                }}
+                                style={{ padding: '6px 12px', backgroundColor: 'white', border: '2px solid #6F42C1', borderRadius: '4px', color: '#6F42C1', fontSize: '12px', cursor: 'pointer' }}
+                              >
+                                {showSourceSession === session.id ? 'Hide Source' : 'Show Source'}
+                              </button>
+                            )}
+                            {editingSession === session.id ? (
+                              <>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingSession(null);
+                                    setEditSessionData(null);
+                                  }}
+                                  style={{ padding: '6px 12px', backgroundColor: 'white', border: '2px solid #6C757D', borderRadius: '4px', color: '#6C757D', fontSize: '12px', cursor: 'pointer' }}
+                                >
+                                  Cancel
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSaveEditSession(session.id);
+                                  }}
+                                  style={{ padding: '6px 12px', backgroundColor: '#20B2AA', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}
+                                >
+                                  Save
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEditSession(session);
+                                  }}
+                                  style={{ padding: '6px 12px', backgroundColor: 'white', border: '2px solid #20B2AA', borderRadius: '4px', color: '#20B2AA', fontSize: '12px', cursor: 'pointer' }}
+                                >
+                                  Edit
+                                </button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteSession(session.id);
+                                  }}
+                                  style={{ padding: '6px 12px', backgroundColor: '#FF6B6B', color: 'white', border: 'none', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}
+                                >
+                                  Delete
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px', color: '#6C757D' }}>No sessions yet</div>
+                )}
+              </div>
+            </div>
+
+            {/* Goals Widget */}
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
+                <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L13.09 8.26L20 9L13.09 9.74L12 16L10.91 9.74L4 9L10.91 8.26L12 2Z" fill="#20B2AA"/>
+                  </svg>
+                  Goals
+                </h2>
+                <button onClick={() => setShowAddGoal(true)} style={{ padding: '6px 12px', backgroundColor: '#20B2AA', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                  Add Goal
+                </button>
+              </div>
+              
+              <div>
+                {goals.length > 0 ? (
+                  goals.slice(0, 5).map((goal, index) => (
+                    <div key={goal.id || index} style={{ padding: '12px', backgroundColor: '#F8F9FA', borderRadius: '8px', marginBottom: '8px' }}>
+                      <div style={{ fontWeight: '500', color: '#343A40', marginBottom: '4px' }}>{goal.title}</div>
+                      <div style={{ fontSize: '12px', color: '#6C757D' }}>{goal.type}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px', color: '#6C757D' }}>No goals yet</div>
+                )}
+              </div>
+            </div>
+
+            {/* Next Session Recommendations Widget */}
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M9 12L11 14L15 10M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" fill="#20B2AA"/>
+                </svg>
+                Next Session Recommendations
+              </h2>
+              
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6C757D' }}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ margin: '0 auto 16px', opacity: 0.5 }}>
+                  <path d="M9 12L11 14L15 10M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" fill="currentColor"/>
+                </svg>
+                <h3 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 8px 0' }}>No recommendations yet</h3>
+                <p style={{ fontSize: '14px', margin: '0' }}>Next session recommendations will appear here.</p>
+              </div>
+            </div>
+
+            {/* Recommended Exercises Widget */}
+            <div style={{ backgroundColor: 'white', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', padding: '24px' }}>
+              <h2 style={{ fontSize: '20px', fontWeight: '600', color: '#343A40', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px', paddingBottom: '12px', borderBottom: '2px solid #20B2AA' }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M12 2L13.09 8.26L20 9L13.09 9.74L12 16L10.91 9.74L4 9L10.91 8.26L12 2Z" fill="#20B2AA"/>
                 </svg>
-                Recommendations
+                Recommended Exercises
               </h2>
-              <button onClick={generateRecommendations} style={{ padding: '6px 12px', backgroundColor: '#20B2AA', color: 'white', border: 'none', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>
-                Generate
-              </button>
-            </div>
-            
-            <div>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px' }}>Exercise Recommendations</label>
-                <textarea 
-                  value={recommendations.exercise_recommendations || ''}
-                  onChange={(e) => setRecommendations(prev => ({ ...prev, exercise_recommendations: e.target.value }))}
-                  style={{ width: '100%', padding: '8px', border: '2px solid #E2E8F0', borderRadius: '6px', resize: 'vertical' }}
-                  placeholder="AI-generated exercise recommendations will appear here..."
-                  rows={3}
-                />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6C757D', marginBottom: '4px' }}>Homework Plan</label>
-                <textarea 
-                  value={recommendations.homework_plan || ''}
-                  onChange={(e) => setRecommendations(prev => ({ ...prev, homework_plan: e.target.value }))}
-                  style={{ width: '100%', padding: '8px', border: '2px solid #E2E8F0', borderRadius: '6px', resize: 'vertical' }}
-                  placeholder="AI-generated homework plan will appear here..."
-                  rows={3}
-                />
+              
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#6C757D' }}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ margin: '0 auto 16px', opacity: 0.5 }}>
+                  <path d="M12 2L13.09 8.26L20 9L13.09 9.74L12 16L10.91 9.74L4 9L10.91 8.26L12 2Z" fill="currentColor"/>
+                </svg>
+                <h3 style={{ fontSize: '16px', fontWeight: '600', margin: '0 0 8px 0' }}>No exercises assigned yet</h3>
+                <p style={{ fontSize: '14px', margin: '0' }}>Recommended exercises will appear here.</p>
               </div>
             </div>
           </div>

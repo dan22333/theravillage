@@ -117,6 +117,15 @@ resource "google_secret_manager_secret" "pinecone_api_key" {
   }
 }
 
+resource "google_secret_manager_secret" "tavily_api_key" {
+  secret_id = "TAVILY_API_KEY"
+  replication {
+    user_managed {
+      replicas { location = var.region }
+    }
+  }
+}
+
 
 
 ####################################
@@ -185,7 +194,7 @@ resource "google_cloud_run_service" "api" {
         # Optional: nudge a new revision when needed
         env {
           name  = "DEPLOYMENT_TIMESTAMP"
-          value = "2025-09-01-23"
+          value = "2025-01-03-calendar-update"
         }
 
         # Set environment to production
@@ -353,7 +362,168 @@ resource "google_cloud_run_service" "ai" {
 }
 
 ####################################
-# 8) Cloud Run IAM - Security Configuration
+# 8) Cloud Run Service for Scraper Service
+####################################
+resource "google_cloud_run_service" "scraper" {
+  name     = "tv-scraper"
+  location = var.region
+
+  template {
+    metadata {
+      annotations = {
+        # Attach Cloud SQL connector for database access
+        "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.pg.connection_name
+      }
+    }
+
+    spec {
+      service_account_name = google_service_account.api_sa.email
+
+      containers {
+        # Use Artifact Registry image URL
+        image = "${var.region}-docker.pkg.dev/${var.project}/${var.artifact_repo}/scraper:latest"
+
+        # Set environment to production
+        env {
+          name  = "ENVIRONMENT"
+          value = "production"
+        }
+
+        # Set CORS allowed origins for production
+        env {
+          name  = "CORS_ALLOWED_ORIGINS"
+          value = var.cors_allowed_origins
+        }
+
+        # Scraper configuration
+        env {
+          name  = "TAVILY_MAX_RESULTS"
+          value = "20"
+        }
+
+        env {
+          name  = "TAVILY_SEARCH_DEPTH"
+          value = "advanced"
+        }
+
+        env {
+          name  = "OPENAI_MODEL"
+          value = "gpt-4o-mini"
+        }
+
+        env {
+          name  = "MAX_CONCURRENT_JOBS"
+          value = "1"
+        }
+
+        env {
+          name  = "PINECONE_ENVIRONMENT"
+          value = "us-central1-gcp"
+        }
+
+        env {
+          name  = "PINECONE_INDEX_NAME"
+          value = "theravillage-exercises"
+        }
+
+        # Note: SCRAPER_SERVICE_URL not needed for Cloud Tasks in same container
+        # Local development uses localhost, production auto-discovers
+
+        ports { container_port = 8000 }
+
+        # Database connection from Secret Manager
+        env {
+          name = "DATABASE_URL"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.db_url.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        # API Keys from Secret Manager
+        env {
+          name = "TAVILY_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.tavily_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "OPENAI_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.openai_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+
+        env {
+          name = "PINECONE_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.pinecone_api_key.secret_id
+              key  = "latest"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  traffic {
+    percent         = 100
+    latest_revision = true
+  }
+
+  depends_on = [
+    google_project_iam_member.sa_artifact_reader,
+    google_project_iam_member.sa_secret_access,
+    google_project_iam_member.sa_sql_client,
+    google_secret_manager_secret.db_url,
+    google_secret_manager_secret.tavily_api_key,
+    google_secret_manager_secret.openai_api_key,
+    google_secret_manager_secret.pinecone_api_key
+  ]
+}
+
+####################################
+# 8.5) Cloud Run Job for Cleanup (Proper Separation)
+####################################
+# Enable Cloud Scheduler API
+resource "google_project_service" "cloudscheduler" {
+  project = var.project
+  service = "cloudscheduler.googleapis.com"
+}
+
+# Cloud Scheduler to trigger cleanup via HTTP endpoint (every 12 hours)
+resource "google_cloud_scheduler_job" "scraper_cleanup" {
+  name        = "scraper-cleanup-schedule"
+  region      = var.region
+  schedule    = "0 */12 * * *"  # Every 12 hours (at 00:00 and 12:00 UTC)
+  time_zone   = "UTC"
+  
+  http_target {
+    uri = "https://tv-scraper-326430627435.us-central1.run.app/jobs/cleanup"
+    http_method = "POST"
+    
+    # Note: OAuth token only works with .googleapis.com URLs
+    # Using public endpoint since scraper service allows public access
+  }
+  
+  depends_on = [
+    google_project_service.cloudscheduler,
+    google_cloud_run_service.scraper
+  ]
+}
+
+####################################
+# 9) Cloud Run IAM - Security Configuration
 ####################################
 resource "google_cloud_run_service_iam_member" "public_access" {
   location = google_cloud_run_service.api.location
@@ -375,6 +545,14 @@ resource "google_project_iam_member" "api_ai_invoker" {
   project = var.project
   role    = "roles/run.invoker"
   member  = "serviceAccount:${google_service_account.api_sa.email}"
+}
+
+# Scraper Service - Public access for job management
+resource "google_cloud_run_service_iam_member" "scraper_public_access" {
+  location = google_cloud_run_service.scraper.location
+  service  = google_cloud_run_service.scraper.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
 
 ####################################
@@ -487,6 +665,10 @@ output "ai_service_url" {
   value = google_cloud_run_service.ai.status[0].url
 }
 
+output "scraper_service_url" {
+  value = google_cloud_run_service.scraper.status[0].url
+}
+
 output "cloud_function_url" {
   value = google_cloudfunctions2_function.send_client_invitation.url
 }
@@ -497,5 +679,30 @@ output "cloud_function_url" {
 #     gcloud secrets versions add DATABASE_URL --data-file=- <<< \
 #       "postgres://<USER>:<PASSWORD>@/<DBNAME>?host=/cloudsql/${google_sql_database_instance.pg.connection_name}"
 #     gcloud secrets versions add FIREBASE_ADMIN_JSON --data-file=./firebase-admin.json
+#     gcloud secrets versions add OPENAI_API_KEY --data-file=- <<< "your-openai-api-key"
+#     gcloud secrets versions add PINECONE_API_KEY --data-file=- <<< "your-pinecone-api-key"
+#     gcloud secrets versions add TAVILY_API_KEY --data-file=- <<< "your-tavily-api-key"
 # - Ensure your CI/CD pushes the image to Artifact Registry at the URL above.
 # - Consider pinning image digests for reproducibility instead of :latest.
+
+####################################
+# Frontend Environment Configuration
+####################################
+
+# Generate environment configuration file for production builds
+resource "local_file" "frontend_env_production" {
+  content = <<-EOT
+VITE_API_URL=${var.api_url}
+EOT
+
+  filename = "${path.module}/../../apps/web/.env.production"
+}
+
+# Output the URLs for reference
+output "frontend_env_config" {
+  description = "Frontend environment configuration"
+  value = {
+    api_url      = var.api_url
+    frontend_url = var.frontend_url
+  }
+}

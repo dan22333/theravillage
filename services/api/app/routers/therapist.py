@@ -5,6 +5,8 @@ from typing import List
 from dotenv import load_dotenv
 from dateutil.parser import parse as parse_datetime
 
+from ..timezone_utils import parse_frontend_datetime, to_utc_for_storage
+
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -556,7 +558,7 @@ async def get_therapist_appointments(
                u.name as client_name, u.id as client_id
         FROM appointments a
         JOIN users u ON a.client_id = u.id
-        WHERE a.therapist_id = :therapist_id AND u.role = 'client'
+        WHERE a.therapist_id = :therapist_id AND u.role = 'client' AND a.status != 'cancelled'
         """
     )
     params = {"therapist_id": ctx.user_id}
@@ -682,32 +684,466 @@ async def create_appointment(request: AppointmentCreateRequest, ctx = Depends(re
         if not result.fetchone():
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Client not assigned to this therapist")
 
-        result = await db.execute(
-            text(
-                """
-                INSERT INTO appointments (org_id, client_id, therapist_id, start_ts, end_ts, location, recurring_rule)
-                VALUES (:org_id, :client_id, :therapist_id, :start_ts, :end_ts, :location, :recurring_rule)
-                RETURNING id
-                """
-            ),
-            {
-                "org_id": ctx.org_id,
-                "client_id": request.client_id,
-                "therapist_id": ctx.user_id,
+        # Store appointment times exactly as received (Eastern Time)
+        print(f"🕐 APPOINTMENT CREATION: start_ts={request.start_ts}, duration={request.duration_minutes}")
+        end_ts = request.start_ts + timedelta(minutes=request.duration_minutes)
+        print(f"🕐 CALCULATED: start_ts={request.start_ts}, end_ts={end_ts}")
+        
+        # Check for overlapping appointments
+        overlap_check = await db.execute(text("""
+            SELECT a.id, a.start_ts, a.end_ts, u.name as client_name
+            FROM appointments a
+            JOIN users u ON a.client_id = u.id
+            WHERE a.therapist_id = :therapist_id 
+            AND a.status NOT IN ('cancelled')
+            AND (
+                (a.start_ts < :end_ts AND a.end_ts > :start_ts)
+            )
+        """), {
+            "therapist_id": ctx.user_id,
+            "start_ts": request.start_ts,
+            "end_ts": end_ts
+        })
+        
+        overlapping_appointments = overlap_check.fetchall()
+        if overlapping_appointments:
+            overlap_details = []
+            for apt in overlapping_appointments:
+                overlap_details.append(f"{apt.client_name} ({apt.start_ts.strftime('%I:%M %p')} - {apt.end_ts.strftime('%I:%M %p')})")
+            
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Time slot is occupied by existing appointment(s): {', '.join(overlap_details)}"
+            )
+        
+        appointments_created = []
+        
+        # Handle recurring appointments
+        if request.recurring_rule and request.recurring_end_date:
+            current_date = request.start_ts.date()
+            end_date = request.recurring_end_date
+            
+            # Calculate recurring interval
+            if request.recurring_rule == 'weekly':
+                interval = timedelta(weeks=1)
+            elif request.recurring_rule == 'biweekly':
+                interval = timedelta(weeks=2)
+            elif request.recurring_rule == 'monthly':
+                interval = timedelta(days=30)  # Approximate monthly
+            else:
+                interval = timedelta(weeks=1)  # Default to weekly
+            
+            # Create appointments for each occurrence
+            current_start = request.start_ts
+            while current_start.date() <= end_date:
+                current_end = current_start + timedelta(minutes=request.duration_minutes)
+                
+                # Check for overlaps for each recurring appointment
+                recurring_overlap_check = await db.execute(text("""
+                    SELECT a.id, a.start_ts, a.end_ts, u.name as client_name
+                    FROM appointments a
+                    JOIN users u ON a.client_id = u.id
+                    WHERE a.therapist_id = :therapist_id 
+                    AND a.status NOT IN ('cancelled')
+                    AND (
+                        (a.start_ts < :end_ts AND a.end_ts > :start_ts)
+                    )
+                """), {
+                    "therapist_id": ctx.user_id,
+                    "start_ts": current_start,
+                    "end_ts": current_end
+                })
+                
+                recurring_overlaps = recurring_overlap_check.fetchall()
+                if recurring_overlaps:
+                    overlap_details = []
+                    for apt in recurring_overlaps:
+                        overlap_details.append(f"{apt.client_name} on {current_start.strftime('%m/%d/%Y')} ({apt.start_ts.strftime('%I:%M %p')} - {apt.end_ts.strftime('%I:%M %p')})")
+                    
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Cannot create recurring appointments: Conflict found on {current_start.strftime('%m/%d/%Y')} with: {', '.join(overlap_details)}"
+                    )
+                
+                result = await db.execute(
+                    text(
+                        """
+                        INSERT INTO appointments (org_id, client_id, therapist_id, start_ts, end_ts, location, recurring_rule)
+                        VALUES (:org_id, :client_id, :therapist_id, :start_ts, :end_ts, :location, :recurring_rule)
+                        RETURNING id
+                        """
+                    ),
+                    {
+                        "org_id": ctx.org_id,
+                        "client_id": request.client_id,
+                        "therapist_id": ctx.user_id,
+                        "start_ts": current_start,
+                        "end_ts": current_end,
+                        "location": json.dumps(request.location) if request.location else None,
+                        "recurring_rule": request.recurring_rule,
+                    },
+                )
+                appointment_id = result.fetchone()[0]
+                appointments_created.append(appointment_id)
+                
+                # Move to next occurrence
+                current_start += interval
+        else:
+            # Single appointment
+            result = await db.execute(
+                text(
+                    """
+                    INSERT INTO appointments (org_id, client_id, therapist_id, start_ts, end_ts, location, recurring_rule)
+                    VALUES (:org_id, :client_id, :therapist_id, :start_ts, :end_ts, :location, :recurring_rule)
+                    RETURNING id
+                    """
+                ),
+                {
+                    "org_id": ctx.org_id,
+                    "client_id": request.client_id,
+                    "therapist_id": ctx.user_id,
                 "start_ts": request.start_ts,
-                "end_ts": request.end_ts,
-                "location": request.location,
-                "recurring_rule": request.recurring_rule,
-            },
-        )
-        appointment_id = result.fetchone()[0]
+                "end_ts": end_ts,
+                    "location": json.dumps(request.location) if request.location else None,
+                    "recurring_rule": request.recurring_rule,
+                },
+            )
+            appointment_id = result.fetchone()[0]
+            appointments_created = [appointment_id]
+        
+        # Create notification for client about new appointment(s)
+        if len(appointments_created) > 1:
+            # Multiple recurring appointments
+            await db.execute(text("""
+                INSERT INTO calendar_notifications (
+                    user_id, type, title, message, related_appointment_id
+                )
+                VALUES (:user_id, :type, :title, :message, :appointment_id)
+            """), {
+                "user_id": request.client_id,
+                "type": "appointment_scheduled",
+                "title": "Recurring Appointments Scheduled",
+                "message": f"Your therapist has scheduled {len(appointments_created)} recurring appointments starting {request.start_ts.strftime('%B %d, %Y at %I:%M %p')}",
+                "appointment_id": appointments_created[0]
+            })
+        else:
+            # Single appointment
+            await db.execute(text("""
+                INSERT INTO calendar_notifications (
+                    user_id, type, title, message, related_appointment_id
+                )
+                VALUES (:user_id, :type, :title, :message, :appointment_id)
+            """), {
+                "user_id": request.client_id,
+                "type": "appointment_scheduled",
+                "title": "New Appointment Scheduled",
+                "message": f"Your therapist has scheduled an appointment for {request.start_ts.strftime('%B %d, %Y at %I:%M %p')}",
+                "appointment_id": appointments_created[0]
+            })
+        
         await db.commit()
-        return {"message": "Appointment created successfully", "appointment_id": appointment_id}
+        return {
+            "message": f"{'Recurring appointments' if len(appointments_created) > 1 else 'Appointment'} created successfully", 
+            "appointment_ids": appointments_created,
+            "count": len(appointments_created)
+        }
     except HTTPException:
         raise
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create appointment: {str(e)}")
+
+@router.post("/therapist/appointments/{appointment_id}/cancel")
+async def cancel_appointment(
+    appointment_id: int,
+    ctx = Depends(require_therapist),
+    db: AsyncSession = Depends(get_db)
+):
+    """Cancel an appointment and notify the client"""
+    try:
+        # Get appointment details
+        result = await db.execute(text("""
+            SELECT a.client_id, a.start_ts, a.end_ts, u.name as client_name
+            FROM appointments a
+            JOIN users u ON a.client_id = u.id
+            WHERE a.id = :appointment_id AND a.therapist_id = :therapist_id
+        """), {"appointment_id": appointment_id, "therapist_id": ctx.user_id})
+        
+        appointment = result.fetchone()
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        # Update appointment status
+        await db.execute(text("""
+            UPDATE appointments 
+            SET status = 'cancelled', updated_at = NOW()
+            WHERE id = :appointment_id
+        """), {"appointment_id": appointment_id})
+
+        # Release the calendar slot if it was linked to this appointment
+        # Release ALL calendar slots in the appointment time range
+        print(f"🔄 CANCELLATION: Releasing slots for therapist {ctx.user_id}")
+        print(f"🔄 Date: {appointment.start_ts.date()}, Start: {appointment.start_ts.time()}, End: {appointment.end_ts.time()}")
+        
+        # First, let's see what slots exist in this range
+        check_slots = await db.execute(text("""
+            SELECT id, slot_date, start_time, end_time, status
+            FROM therapist_calendar_slots 
+            WHERE therapist_id = :therapist_id 
+            AND slot_date = :slot_date
+            AND start_time >= :start_time
+            AND start_time < :end_time
+        """), {
+            "therapist_id": ctx.user_id,
+            "slot_date": appointment.start_ts.date(),
+            "start_time": appointment.start_ts.time(),
+            "end_time": appointment.end_ts.time()
+        })
+        
+        existing_slots = check_slots.fetchall()
+        print(f"🔄 CANCELLATION: Found {len(existing_slots)} slots in range:")
+        for slot in existing_slots:
+            print(f"   - Slot {slot.id}: {slot.slot_date} {slot.start_time}-{slot.end_time} ({slot.status})")
+        
+        # Try a more direct approach - update all booked slots for this therapist on this date
+        # that fall within the appointment time range
+        slots_released = await db.execute(text("""
+            UPDATE therapist_calendar_slots 
+            SET status = 'available' 
+            WHERE therapist_id = :therapist_id 
+            AND slot_date = :slot_date
+            AND start_time >= :start_time
+            AND start_time < :end_time
+            AND status = 'booked'
+        """), {
+            "therapist_id": ctx.user_id,
+            "slot_date": appointment.start_ts.date(),
+            "start_time": appointment.start_ts.time(),
+            "end_time": appointment.end_ts.time()
+        })
+        
+        print(f"🔄 CANCELLATION: Released {slots_released.rowcount} slots")
+        
+        # If no slots were released, try a more aggressive approach
+        if slots_released.rowcount == 0:
+            print("🔄 CANCELLATION: No slots released with time range, trying individual slot updates")
+            
+            # Calculate all 15-minute slots that should be released
+            from datetime import datetime, timedelta
+            current_time = datetime.combine(appointment.start_ts.date(), appointment.start_ts.time())
+            end_time = datetime.combine(appointment.end_ts.date(), appointment.end_ts.time())
+            
+            individual_releases = 0
+            while current_time < end_time:
+                individual_release = await db.execute(text("""
+                    UPDATE therapist_calendar_slots 
+                    SET status = 'available' 
+                    WHERE therapist_id = :therapist_id 
+                    AND slot_date = :slot_date
+                    AND start_time = :exact_start_time
+                    AND status = 'booked'
+                """), {
+                    "therapist_id": ctx.user_id,
+                    "slot_date": current_time.date(),
+                    "exact_start_time": current_time.time()
+                })
+                
+                if individual_release.rowcount > 0:
+                    individual_releases += 1
+                    print(f"   - Released slot at {current_time.time()}")
+                
+                current_time += timedelta(minutes=15)
+            
+            print(f"🔄 CANCELLATION: Released {individual_releases} slots individually")
+
+        # Create notification for client
+        await db.execute(text("""
+            INSERT INTO calendar_notifications (
+                user_id, type, title, message, related_appointment_id
+            )
+            VALUES (:user_id, :type, :title, :message, :appointment_id)
+        """), {
+            "user_id": appointment.client_id,
+            "type": "appointment_cancelled",
+            "title": "Appointment Cancelled",
+            "message": f"Your appointment scheduled for {appointment.start_ts.strftime('%B %d, %Y at %I:%M %p')} has been cancelled by your therapist.",
+            "appointment_id": appointment_id
+        })
+
+        await db.commit()
+        return {"message": "Appointment cancelled successfully"}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to cancel appointment: {str(e)}")
+
+@router.get("/therapist/appointments/{appointment_id}")
+async def get_appointment_details(
+    appointment_id: int,
+    ctx = Depends(require_therapist),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get detailed information about a specific appointment"""
+    try:
+        result = await db.execute(text("""
+            SELECT a.id, a.client_id, a.start_ts, a.end_ts, a.status, a.location,
+                   a.recurring_rule, u.name as client_name, u.email as client_email
+            FROM appointments a
+            JOIN users u ON a.client_id = u.id
+            WHERE a.id = :appointment_id AND a.therapist_id = :therapist_id
+        """), {"appointment_id": appointment_id, "therapist_id": ctx.user_id})
+        
+        appointment = result.fetchone()
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        return {
+            "id": appointment.id,
+            "client_id": appointment.client_id,
+            "client_name": appointment.client_name,
+            "client_email": appointment.client_email,
+            "start_ts": appointment.start_ts.isoformat(),
+            "end_ts": appointment.end_ts.isoformat(),
+            "status": appointment.status,
+            "location": appointment.location,
+            "recurring_rule": appointment.recurring_rule
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get appointment details: {str(e)}")
+
+@router.post("/therapist/appointments/{appointment_id}/reschedule")
+async def reschedule_appointment(
+    appointment_id: int,
+    request: AppointmentCreateRequest,
+    ctx = Depends(require_therapist),
+    db: AsyncSession = Depends(get_db)
+):
+    """Reschedule an existing appointment"""
+    try:
+        # Get original appointment details
+        original_result = await db.execute(text("""
+            SELECT a.client_id, a.start_ts, a.end_ts, u.name as client_name
+            FROM appointments a
+            JOIN users u ON a.client_id = u.id
+            WHERE a.id = :appointment_id AND a.therapist_id = :therapist_id
+        """), {"appointment_id": appointment_id, "therapist_id": ctx.user_id})
+        
+        original_appointment = original_result.fetchone()
+        if not original_appointment:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        # Calculate new end time
+        from datetime import timedelta
+        end_ts = request.start_ts + timedelta(minutes=request.duration_minutes)
+        
+        # Check for overlapping appointments (excluding the current appointment being rescheduled)
+        overlap_check = await db.execute(text("""
+            SELECT a.id, a.start_ts, a.end_ts, u.name as client_name
+            FROM appointments a
+            JOIN users u ON a.client_id = u.id
+            WHERE a.therapist_id = :therapist_id 
+            AND a.id != :appointment_id
+            AND a.status NOT IN ('cancelled')
+            AND (
+                (a.start_ts < :end_ts AND a.end_ts > :start_ts)
+            )
+        """), {
+            "therapist_id": ctx.user_id,
+            "appointment_id": appointment_id,
+            "start_ts": request.start_ts,
+            "end_ts": end_ts
+        })
+        
+        overlapping_appointments = overlap_check.fetchall()
+        if overlapping_appointments:
+            overlap_details = []
+            for apt in overlapping_appointments:
+                overlap_details.append(f"{apt.client_name} ({apt.start_ts.strftime('%I:%M %p')} - {apt.end_ts.strftime('%I:%M %p')})")
+            
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot reschedule: New time slot is occupied by existing appointment(s): {', '.join(overlap_details)}"
+            )
+        
+        # Create new appointment
+        new_result = await db.execute(text("""
+            INSERT INTO appointments (org_id, client_id, therapist_id, start_ts, end_ts, location, recurring_rule)
+            VALUES (:org_id, :client_id, :therapist_id, :start_ts, :end_ts, :location, :recurring_rule)
+            RETURNING id
+        """), {
+            "org_id": ctx.org_id,
+            "client_id": original_appointment.client_id,
+            "therapist_id": ctx.user_id,
+            "start_ts": request.start_ts,
+            "end_ts": end_ts,
+            "location": json.dumps(request.location) if request.location else None,
+            "recurring_rule": request.recurring_rule,
+        })
+        new_appointment_id = new_result.fetchone()[0]
+
+        # Cancel old appointment
+        await db.execute(text("""
+            UPDATE appointments 
+            SET status = 'cancelled', updated_at = NOW()
+            WHERE id = :appointment_id
+        """), {"appointment_id": appointment_id})
+
+        # Release ALL old calendar slots in the appointment time range
+        await db.execute(text("""
+            UPDATE therapist_calendar_slots 
+            SET status = 'available' 
+            WHERE therapist_id = :therapist_id 
+            AND slot_date = :slot_date
+            AND start_time >= :start_time
+            AND start_time < :end_time
+            AND status = 'booked'
+        """), {
+            "therapist_id": ctx.user_id,
+            "slot_date": original_appointment.start_ts.date(),
+            "start_time": original_appointment.start_ts.time(),
+            "end_time": original_appointment.end_ts.time()
+        })
+
+        # Create notifications for client
+        await db.execute(text("""
+            INSERT INTO calendar_notifications (
+                user_id, type, title, message, related_appointment_id
+            )
+            VALUES (:user_id, :type, :title, :message, :appointment_id)
+        """), {
+            "user_id": original_appointment.client_id,
+            "type": "appointment_cancelled",
+            "title": "Appointment Cancelled",
+            "message": f"Your appointment for {original_appointment.start_ts.strftime('%B %d, %Y at %I:%M %p')} has been cancelled for rescheduling.",
+            "appointment_id": appointment_id
+        })
+
+        await db.execute(text("""
+            INSERT INTO calendar_notifications (
+                user_id, type, title, message, related_appointment_id
+            )
+            VALUES (:user_id, :type, :title, :message, :appointment_id)
+        """), {
+            "user_id": original_appointment.client_id,
+            "type": "appointment_rescheduled",
+            "title": "Appointment Rescheduled",
+            "message": f"Your appointment has been rescheduled to {request.start_ts.strftime('%B %d, %Y at %I:%M %p')}.",
+            "appointment_id": new_appointment_id
+        })
+
+        await db.commit()
+        return {"message": "Appointment rescheduled successfully", "new_appointment_id": new_appointment_id}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to reschedule appointment: {str(e)}")
 
 
 @router.post("/therapist/sessions/{appointment_id}/start")

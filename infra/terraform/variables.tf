@@ -42,7 +42,12 @@ variable "frontend_url" {
   default     = "https://theravillage-edb89.web.app"
 }
 
-
+# API URL for frontend configuration
+variable "api_url" {
+  type        = string
+  description = "Production API URL for frontend"
+  default     = "https://tv-api-326430627435.us-central1.run.app"
+}
 
 # Database password will be set manually after infrastructure creation
 # This prevents storing passwords in Terraform state or variables

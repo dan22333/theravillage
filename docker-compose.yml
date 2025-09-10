@@ -1,7 +1,7 @@
 services:
-  # PostgreSQL Database
+  # PostgreSQL Database with pgvector extension
   tv-postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     container_name: tv-postgres
     ports:
       - "5433:5432"
@@ -52,6 +52,30 @@ services:
     volumes:
       - ./services/ai:/app
       - ~/.config/gcloud:/root/.config/gcloud:ro
+    networks:
+      - tv-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Treatment Scraper Service
+  tv-scraper:
+    build:
+      context: ./services/scraper
+      dockerfile: Dockerfile.dev
+    container_name: tv-scraper
+    ports:
+      - "8002:8000"
+    env_file:
+      - env.local
+    volumes:
+      - ./services/scraper:/app
+      - ~/.config/gcloud:/root/.config/gcloud:ro
+    depends_on:
+      tv-postgres:
+        condition: service_healthy
     networks:
       - tv-network
     healthcheck:

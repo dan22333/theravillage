@@ -11,31 +11,40 @@ import './MainApp.css'
 const MainApp = () => {
   const { user, loading, signInWithGoogle, userData } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
+  
+  // Debug logs removed
 
-  // Get cached role for immediate rendering
+  // Get cached role for immediate rendering - make it reactive to user state changes
   const cachedUserData = React.useMemo(() => {
+    // If user is null (logged out), don't use cached data
+    if (user === null) {
+      return null;
+    }
+    
     try {
       const cached = localStorage.getItem('theravillage_user_data');
       return cached ? JSON.parse(cached) : null;
     } catch {
       return null;
     }
-  }, []);
+  }, [user]); // Add user as dependency so it updates when user logs out
 
   // IMMEDIATE DASHBOARD RENDERING - Use cached data first, then real data
-  if (cachedUserData?.role === 'therapist' || userData?.role === 'therapist') {
+  const userRole = userData?.role || cachedUserData?.role;
+  
+  if (userRole === 'therapist') {
     return <TherapistDashboard />
   }
   
-  if (cachedUserData?.role === 'admin' || userData?.role === 'admin') {
+  if (userRole === 'admin') {
     return <AdminPanel />
   }
   
-  if (cachedUserData?.role === 'client' || userData?.role === 'client') {
+  if (userRole === 'client') {
     return <ClientDashboard />
   }
   
-  if (cachedUserData?.role === 'agency' || userData?.role === 'agency') {
+  if (userRole === 'agency') {
     return <AgencyDashboard />
   }
 

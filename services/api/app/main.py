@@ -7,12 +7,19 @@ import json
 import uuid
 from datetime import datetime
 from dotenv import load_dotenv
+import pytz
 
 # Load environment variables from .env file
 load_dotenv()
 
+# Set application timezone to Eastern Time
+APP_TIMEZONE = pytz.timezone('America/New_York')
+
+# Configure all datetime operations to use Eastern Time
+os.environ['TZ'] = 'America/New_York'
+
 from .db import init_db
-from .routers import health, auth, client, therapist, admin, ai
+from .routers import health, auth, client, therapist, admin, ai, calendar
 
 app = FastAPI(title="TheraVillage API", version="1.0.0")
 
@@ -136,5 +143,6 @@ app.include_router(client.router, tags=["client"])
 app.include_router(therapist.router, tags=["therapist"])
 app.include_router(admin.router, tags=["admin"])
 app.include_router(ai.router, tags=["ai"])
+app.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
 
 
