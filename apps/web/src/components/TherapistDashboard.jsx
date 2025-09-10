@@ -811,7 +811,7 @@ const TherapistDashboard = () => {
                         style={{ 
                           padding: '3px 6px', 
                           fontSize: '10px', 
-                          backgroundColor: '#28A745', 
+                          backgroundColor: '#20B2AA', 
                           color: 'white', 
                           border: 'none', 
                           borderRadius: '4px', 
@@ -830,7 +830,7 @@ const TherapistDashboard = () => {
                         style={{ 
                           padding: '3px 6px', 
                           fontSize: '10px', 
-                          backgroundColor: '#6F42C1', 
+                          backgroundColor: '#20B2AA', 
                           color: 'white', 
                           border: 'none', 
                           borderRadius: '4px', 
@@ -849,7 +849,7 @@ const TherapistDashboard = () => {
                         style={{ 
                           padding: '3px 6px', 
                           fontSize: '10px', 
-                          backgroundColor: '#DC3545', 
+                          backgroundColor: '#20B2AA', 
                           color: 'white', 
                           border: 'none', 
                           borderRadius: '4px', 
