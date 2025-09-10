@@ -142,6 +142,8 @@ async def get_client_appointments(
 ):
     """Get all appointments for the current client"""
     try:
+        from .timezone_utils import from_utc_to_app_timezone
+        
         query = text("""
             SELECT a.id, a.start_ts, a.end_ts, a.status, a.location,
                    u.name as therapist_name, a.scheduling_request_id,
@@ -158,8 +160,8 @@ async def get_client_appointments(
         for row in result.fetchall():
             appointment = {
                 "id": row.id,
-                "start_ts": row.start_ts.isoformat(),
-                "end_ts": row.end_ts.isoformat(),
+                "start_ts": from_utc_to_app_timezone(row.start_ts).isoformat(),
+                "end_ts": from_utc_to_app_timezone(row.end_ts).isoformat(),
                 "status": row.status,
                 "location": row.location,
                 "therapist_name": row.therapist_name,

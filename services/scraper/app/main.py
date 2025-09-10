@@ -449,7 +449,7 @@ async def execute_job_internal(request: dict):
         if not job_id or not config_data:
             raise HTTPException(status_code=400, detail="Missing job_id or config")
         
-        logger.info(f"🚀 Executing job via Cloud Tasks: {job_id}")
+        logger.info(f"🚀 Executing job locally: {job_id}")
         
         # Import job runner here to avoid circular imports
         from .job_runner import JobRunner
@@ -465,26 +465,6 @@ async def execute_job_internal(request: dict):
         logger.error(f"❌ Error executing job: {e}")
         raise HTTPException(status_code=500, detail=f"Error executing job: {str(e)}")
 
-# Local development endpoint for testing
-@app.post("/internal/execute-job-local")
-async def execute_job_local(job_id: str):
-    """Local development endpoint to execute jobs directly"""
-    try:
-        logger.info(f"🔄 Executing job locally: {job_id}")
-        
-        # Import job runner here to avoid circular imports
-        from .job_runner import JobRunner
-        
-        # Create and run job
-        runner = JobRunner()
-        await runner.initialize()
-        await runner.run_job(job_id)
-        
-        return {"success": True, "message": f"Job {job_id} completed"}
-        
-    except Exception as e:
-        logger.error(f"❌ Error executing local job: {e}")
-        raise HTTPException(status_code=500, detail=f"Error executing job: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(

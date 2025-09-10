@@ -87,6 +87,10 @@ build-ai:
 build-api:
 	docker-compose --env-file env.local build --no-cache tv-api
 
+# Build API service for production (AMD64 platform)
+build-api-prod:
+	docker build --platform linux/amd64 -t us-central1-docker.pkg.dev/theravillage-edb89/tv/api:latest ./services/api
+
 # Show logs from all services
 logs:
 	docker-compose --env-file env.local logs -f

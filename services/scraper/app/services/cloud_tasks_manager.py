@@ -61,8 +61,8 @@ class CloudTasksManager:
                     await self._update_job_status(job_id, JobStatus.FAILED, "Failed to create Cloud Task")
                     return {"success": False, "message": "Failed to create Cloud Task", "job_id": job_id}
             else:
-                # Local development fallback
-                asyncio.create_task(self._run_local_scraping_job(job_id, config, topics))
+                # Local development fallback - use the same JobRunner logic as production
+                asyncio.create_task(self._call_execute_job_local(job_id))
             
             return {
                 "success": True,
@@ -128,70 +128,27 @@ class CloudTasksManager:
         })
         logger.info(f"✅ Created job record: {job_id}")
     
-    async def _run_local_scraping_job(self, job_id: str, config: ScrapeJobConfig, topics: List[Dict]):
-        """Local development fallback"""
-        logger.info(f"🔄 Running scraping job locally: {job_id}")
-        
-        # Import here to avoid circular imports
-        from .tavily_client import TavilyClient
-        
+    async def _call_execute_job_local(self, job_id: str):
+        """Execute job locally using the same logic as production"""
         try:
-            tavily_client = TavilyClient()
-            topics_processed = 0
-            errors_encountered = 0
+            logger.info(f"🔄 Executing job locally: {job_id}")
             
-            await self._update_job_status(job_id, JobStatus.RUNNING, f"Processing {len(topics)} topics")
+            # Call the same function that production uses
+            from ..main import execute_job_internal
             
-            for i, topic in enumerate(topics):
-                try:
-                    # Check if job was cancelled
-                    job_status_check = await fetch_one("""
-                        SELECT status FROM scrape_jobs WHERE id = :job_id
-                    """, {"job_id": job_id})
-                    
-                    if job_status_check and job_status_check.status == "cancelled":
-                        logger.info(f"🛑 Job {job_id} was cancelled, stopping execution")
-                        return
-                    
-                    logger.info(f"🔄 Processing topic {i+1}/{len(topics)}: {topic['topic_name']}")
-                    
-                    # Search with Tavily
-                    try:
-                        tavily_response = await tavily_client.search_topic(topic, job_id)
-                        
-                        if tavily_response:
-                            logger.info(f"✅ Processed topic: {topic['topic_name']} - saved to database")
-                        else:
-                            logger.warning(f"⚠️ No results for topic: {topic['topic_name']}")
-                        
-                        # Always count as processed (attempted) regardless of save success
-                        topics_processed += 1
-                        
-                    except Exception as e:
-                        logger.error(f"❌ Error processing topic {topic['topic_name']}: {e}")
-                        # Still count as processed (attempted)
-                        topics_processed += 1
-                        errors_encountered += 1
-                    
-                    # Rate limiting between topics
-                    await asyncio.sleep(2)
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error processing topic {topic['topic_name']}: {e}")
-                    errors_encountered += 1
-                    continue
+            # Create the same request structure that Cloud Tasks would send
+            request = {
+                "job_id": job_id,
+                "config": {}  # Config is already in database, not needed here
+            }
             
-            # Update final status
-            final_status = JobStatus.COMPLETED if errors_encountered == 0 else JobStatus.PARTIAL
-            await self._update_job_status(
-                job_id, 
-                final_status, 
-                f"Completed: {topics_processed} topics processed, {errors_encountered} errors"
-            )
-            
+            await execute_job_internal(request)
+            logger.info(f"✅ Local job execution completed: {job_id}")
+                
         except Exception as e:
-            logger.error(f"❌ Fatal error in local scraping job {job_id}: {e}")
-            await self._update_job_status(job_id, JobStatus.FAILED, str(e))
+            logger.error(f"❌ Error executing local job: {e}")
+            await self._update_job_status(job_id, JobStatus.FAILED, f"Local execution failed: {str(e)}")
+
     
     async def _update_job_status(self, job_id: str, status: JobStatus, message: str = None):
         """Update job status in database"""

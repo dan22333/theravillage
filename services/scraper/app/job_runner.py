@@ -8,6 +8,7 @@ import sys
 import os
 import logging
 from datetime import datetime
+from typing import Dict
 
 # Add the parent directory to Python path
 sys.path.insert(0, '/app')
@@ -171,54 +172,6 @@ class JobRunner:
             logger.error(f"❌ Fatal error in scraping job {job_id}: {e}")
             await self._update_job_status(job_id, "failed", str(e))
     
-    async def _create_cloud_run_job(self, job_name: str, job_id: str, config: ScrapeJobConfig) -> bool:
-        """Create and execute Cloud Run Job"""
-        try:
-            cmd = [
-                "gcloud", "run", "jobs", "create", job_name,
-                "--image", self.image_url,
-                "--region", self.region,
-                "--project", self.project_id,
-                "--max-retries", "2",
-                "--parallelism", "1", 
-                "--task-count", "1",
-                "--task-timeout", "3600",  # 1 hour
-                "--cpu", "2",
-                "--memory", "2Gi",
-                "--set-env-vars", f"ENVIRONMENT=production,SCRAPER_JOB_ID={job_id}",
-                "--command", "python",
-                "--args", f"-m,app.job_runner,{job_id}",
-                "--quiet"
-            ]
-            
-            # Create the job
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
-            if result.returncode != 0:
-                logger.error(f"❌ Failed to create job: {result.stderr}")
-                return False
-            
-            # Execute the job
-            exec_cmd = [
-                "gcloud", "run", "jobs", "execute", job_name,
-                "--region", self.region,
-                "--project", self.project_id,
-                "--async",  # Don't wait for completion
-                "--quiet"
-            ]
-            
-            exec_result = subprocess.run(exec_cmd, capture_output=True, text=True, timeout=30)
-            
-            if exec_result.returncode == 0:
-                logger.info(f"🚀 Successfully started job execution: {job_name}")
-                return True
-            else:
-                logger.error(f"❌ Failed to execute job: {exec_result.stderr}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Error with Cloud Run Job: {e}")
-            return False
     
     async def _get_job_data(self, job_id: str) -> Dict:
         """Get job configuration from database"""

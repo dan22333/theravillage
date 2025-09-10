@@ -552,6 +552,8 @@ async def get_therapist_appointments(
     start_date: date | None = None,
     end_date: date | None = None,
 ):
+    from .timezone_utils import from_utc_to_app_timezone
+    
     query = (
         """
         SELECT a.id, a.start_ts, a.end_ts, a.status, a.location,
@@ -573,8 +575,8 @@ async def get_therapist_appointments(
     appointments = [
         {
             "id": row[0],
-            "start_ts": row[1],
-            "end_ts": row[2],
+            "start_ts": from_utc_to_app_timezone(row[1]).isoformat(),
+            "end_ts": from_utc_to_app_timezone(row[2]).isoformat(),
             "status": row[3],
             "location": row[4],
             "client_name": row[5],
@@ -587,7 +589,9 @@ async def get_therapist_appointments(
 
 @router.get("/therapist/appointments/today")
 async def get_today_appointments(ctx = Depends(require_therapist), db: AsyncSession = Depends(get_db)):
-    today = date.today()
+    from .timezone_utils import from_utc_to_app_timezone, now_in_app_timezone
+    
+    today = now_in_app_timezone().date()
     result = await db.execute(
         text(
             """
@@ -596,7 +600,7 @@ async def get_today_appointments(ctx = Depends(require_therapist), db: AsyncSess
             FROM appointments a
             INNER JOIN users u ON a.client_id = u.id
             WHERE a.therapist_id = :therapist_id 
-            AND DATE(a.start_ts) = :today
+            AND DATE(a.start_ts AT TIME ZONE 'UTC' AT TIME ZONE 'America/New_York') = :today
             ORDER BY a.start_ts
             """
         ),
@@ -608,8 +612,8 @@ async def get_today_appointments(ctx = Depends(require_therapist), db: AsyncSess
             "client_id": row[1],
             "client_name": row[2],
             "therapist_id": row[3],
-            "start_ts": row[4],
-            "end_ts": row[5],
+            "start_ts": from_utc_to_app_timezone(row[4]).isoformat(),
+            "end_ts": from_utc_to_app_timezone(row[5]).isoformat(),
             "status": row[6],
             "location": row[7],
         }
