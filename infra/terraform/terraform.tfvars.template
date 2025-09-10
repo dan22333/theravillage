@@ -1,0 +1,8 @@
+project     = "theravillage-edb89"
+region      = "us-central1"
+artifact_repo = "tv"
+# Database password removed for security - will be set manually
+
+# Admin Configuration - SENSITIVE DATA
+# Replace with actual admin Firebase UID
+admin_firebase_uid = "YOUR_ADMIN_FIREBASE_UID_HERE"

@@ -462,6 +462,11 @@
   color: #92400e;
 }
 
+.status-badge.cancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 /* Request item status styling */
 .request-item.approved {
   border-color: #10b981;
@@ -476,6 +481,11 @@
 .request-item.counter_proposed {
   border-color: #f59e0b;
   background: #fffbeb;
+}
+
+.request-item.cancelled {
+  border-color: #ef4444;
+  background: #fef2f2;
 }
 
 .therapist-response {

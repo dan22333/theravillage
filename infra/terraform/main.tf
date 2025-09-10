@@ -126,6 +126,21 @@ resource "google_secret_manager_secret" "tavily_api_key" {
   }
 }
 
+# Admin Configuration
+resource "google_secret_manager_secret" "admin_firebase_uid" {
+  secret_id = "ADMIN_FIREBASE_UID"
+  replication {
+    user_managed {
+      replicas { location = var.region }
+    }
+  }
+}
+
+resource "google_secret_manager_secret_version" "admin_firebase_uid" {
+  secret      = google_secret_manager_secret.admin_firebase_uid.id
+  secret_data = var.admin_firebase_uid
+}
+
 
 
 ####################################

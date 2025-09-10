@@ -6,6 +6,7 @@ import ViewCalendar from './ViewCalendar';
 import ExerciseLibrary from './ExerciseLibrary';
 import ClientProfile from './ClientProfile';
 import TherapistCalendar from './TherapistCalendar';
+import RecentRequests from './RecentRequests';
 import './TherapistDashboard.css';
 
 const TherapistDashboard = () => {
@@ -717,7 +718,7 @@ const TherapistDashboard = () => {
         </div>
 
         {/* Dashboard Grid - Better Alignment */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', alignItems: 'stretch' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '20px', alignItems: 'stretch' }}>
           
           {/* Upcoming Appointments Widget */}
           <div className="dashboard-card">
@@ -1092,6 +1093,9 @@ const TherapistDashboard = () => {
               )}
             </div>
           </div>
+
+          {/* Recent Requests Widget */}
+          <RecentRequests />
         </div>
       </div>
 

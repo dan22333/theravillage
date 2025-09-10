@@ -330,6 +330,7 @@ export const ClientSchedulingRequests = ({ refreshTrigger }) => {
   const [pendingRequests, setPendingRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [cancellingRequestId, setCancellingRequestId] = useState(null);
+  const [showAll, setShowAll] = useState(false);
 
   const API_URL = import.meta.env.VITE_API_URL;
 
@@ -467,7 +468,7 @@ export const ClientSchedulingRequests = ({ refreshTrigger }) => {
         </div>
       ) : (
         <div className="requests-list">
-          {pendingRequests.map(request => (
+          {(showAll ? pendingRequests : pendingRequests.slice(0, 5)).map(request => (
             <div key={request.id} className={`request-item ${request.status}`}>
               <div className="request-info">
                 <div className="request-therapist">
@@ -491,7 +492,7 @@ export const ClientSchedulingRequests = ({ refreshTrigger }) => {
                     {request.status === 'pending' ? 'Pending Response' :
                      request.status === 'approved' ? 'Approved ✅' :
                      request.status === 'declined' ? 'Declined ❌' :
-                     request.status === 'cancelled' ? 'Cancelled ❌' :
+                     request.status === 'cancelled' ? 'Cancelled by Therapist ❌' :
                      request.status === 'counter_proposed' ? 'Alternative Suggested' :
                      request.status.charAt(0).toUpperCase() + request.status.slice(1)}
                   </span>
@@ -530,6 +531,26 @@ export const ClientSchedulingRequests = ({ refreshTrigger }) => {
               </div>
             </div>
           ))}
+          {pendingRequests.length > 5 && (
+            <div className="show-more-container">
+              <button 
+                onClick={() => setShowAll(!showAll)}
+                className="show-more-btn"
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#20B2AA',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  marginTop: '16px'
+                }}
+              >
+                {showAll ? `Show Less (${pendingRequests.length - 5} hidden)` : `Show More (${pendingRequests.length - 5} more)`}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

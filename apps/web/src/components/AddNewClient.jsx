@@ -5,9 +5,12 @@ import './AddNewClient.css';
 const AddNewClient = ({ onBack }) => {
   const { getToken } = useAuth();
   const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    dob: ''
+    guardian_first_name: '',
+    guardian_last_name: '',
+    guardian_email: '',
+    patient_first_name: '',
+    patient_last_name: '',
+    patient_dob: ''
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -47,19 +50,25 @@ const AddNewClient = ({ onBack }) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          name: formData.name,
-          email: formData.email,
-          dob: formData.dob || null
+          guardian_first_name: formData.guardian_first_name,
+          guardian_last_name: formData.guardian_last_name,
+          guardian_email: formData.guardian_email,
+          patient_first_name: formData.patient_first_name,
+          patient_last_name: formData.patient_last_name,
+          patient_dob: formData.patient_dob || null
         })
       });
 
       if (response.ok) {
         const result = await response.json();
-        setSuccess(`Invitation sent to ${formData.email}! The client will receive an email with a secure link to join TheraVillage.`);
+        setSuccess(`Invitation sent to ${formData.guardian_email}! The client will receive an email with a secure link to join TheraVillage.`);
         setFormData({
-          name: '',
-          email: '',
-          dob: ''
+          guardian_first_name: '',
+          guardian_last_name: '',
+          guardian_email: '',
+          patient_first_name: '',
+          patient_last_name: '',
+          patient_dob: ''
         });
         setTimeout(() => {
           onBack();
@@ -104,40 +113,82 @@ const AddNewClient = ({ onBack }) => {
               </p>
             
             <div className="form-group" style={{ marginBottom: '24px' }}>
-              <label htmlFor="name" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Full Name *</label>
+              <label htmlFor="guardian_first_name" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Guardian First Name *</label>
               <input
                 type="text"
-                id="name"
-                name="name"
-                value={formData.name}
+                id="guardian_first_name"
+                name="guardian_first_name"
+                value={formData.guardian_first_name}
                 onChange={handleInputChange}
                 required
-                placeholder="Enter client's full name"
+                placeholder="Enter guardian's first name"
                 style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #E2E8F0', borderRadius: '8px', backgroundColor: 'white', color: '#343A40', transition: 'border-color 150ms ease-in-out' }}
               />
             </div>
 
             <div className="form-group" style={{ marginBottom: '24px' }}>
-              <label htmlFor="email" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Email Address *</label>
+              <label htmlFor="guardian_last_name" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Guardian Last Name *</label>
+              <input
+                type="text"
+                id="guardian_last_name"
+                name="guardian_last_name"
+                value={formData.guardian_last_name}
+                onChange={handleInputChange}
+                required
+                placeholder="Enter guardian's last name"
+                style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #E2E8F0', borderRadius: '8px', backgroundColor: 'white', color: '#343A40', transition: 'border-color 150ms ease-in-out' }}
+              />
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '24px' }}>
+              <label htmlFor="guardian_email" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Guardian's Email *</label>
               <input
                 type="email"
-                id="email"
-                name="email"
-                value={formData.email}
+                id="guardian_email"
+                name="guardian_email"
+                value={formData.guardian_email}
                 onChange={handleInputChange}
                 required
-                placeholder="Enter client's email address"
+                placeholder="Enter guardian's email address"
                 style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #E2E8F0', borderRadius: '8px', backgroundColor: 'white', color: '#343A40', transition: 'border-color 150ms ease-in-out' }}
               />
             </div>
 
             <div className="form-group" style={{ marginBottom: '24px' }}>
-              <label htmlFor="dob" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Date of Birth</label>
+              <label htmlFor="patient_first_name" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Patient's First Name *</label>
+              <input
+                type="text"
+                id="patient_first_name"
+                name="patient_first_name"
+                value={formData.patient_first_name}
+                onChange={handleInputChange}
+                required
+                placeholder="Enter patient's first name"
+                style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #E2E8F0', borderRadius: '8px', backgroundColor: 'white', color: '#343A40', transition: 'border-color 150ms ease-in-out' }}
+              />
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '24px' }}>
+              <label htmlFor="patient_last_name" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Patient's Last Name *</label>
+              <input
+                type="text"
+                id="patient_last_name"
+                name="patient_last_name"
+                value={formData.patient_last_name}
+                onChange={handleInputChange}
+                required
+                placeholder="Enter patient's last name"
+                style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #E2E8F0', borderRadius: '8px', backgroundColor: 'white', color: '#343A40', transition: 'border-color 150ms ease-in-out' }}
+              />
+            </div>
+
+            <div className="form-group" style={{ marginBottom: '24px' }}>
+              <label htmlFor="patient_dob" style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#6C757D', textTransform: 'uppercase', letterSpacing: '0.025em', marginBottom: '8px' }}>Patient's Date of Birth</label>
               <input
                 type="date"
-                id="dob"
-                name="dob"
-                value={formData.dob}
+                id="patient_dob"
+                name="patient_dob"
+                value={formData.patient_dob}
                 onChange={handleInputChange}
                 style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '2px solid #E2E8F0', borderRadius: '8px', backgroundColor: 'white', color: '#343A40', transition: 'border-color 150ms ease-in-out' }}
               />

@@ -65,12 +65,12 @@ async def load_secrets():
         settings.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
         settings.PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
         logger.warning("⚠️ Using fallback environment variables for API keys")
-from .database import init_db, check_db_health, get_db_session
+from .db import init_db, check_db_health, get_db_session
 from .models.jobs import ScrapeJobRequest, ScrapeJobResponse, ScrapeJobStatus, JobStatus
 from .models.topics import TopicSeedRequest, TopicSeedResponse
-from .services.topic_seeder import TopicSeeder
-from .services.tavily_client import TavilyClient
-from .services.cloud_tasks_manager import CloudTasksManager
+from .external_services.topic_seeder import TopicSeeder
+from .external_services.tavily_client import TavilyClient
+from .external_services.cloud_tasks_manager import CloudTasksManager
 
 # Configure logging
 logging.basicConfig(
@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Services initialized")
         
         # Note: Automatic cleanup handled by separate Cloud Scheduler + Cloud Run Job
-        # See app/cleanup_job.py for dedicated cleanup logic
+        # See app/cleanup_runner.py for dedicated cleanup logic
         
         logger.info("🎯 Scraper service ready!")
         
@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
     
     logger.info("🛑 Shutting down scraper service...")
 
-# Cleanup is now handled by dedicated Cloud Run Job (see app/cleanup_job.py)
+# Cleanup is now handled by dedicated Cloud Run Job (see app/cleanup_runner.py)
 
 # Create FastAPI app
 app = FastAPI(
@@ -157,7 +157,7 @@ async def health_check():
     
     # Get running jobs count from database
     try:
-        from .database import fetch_one
+        from .db import fetch_one
         result = await fetch_one("SELECT COUNT(*) FROM scrape_jobs WHERE status = 'running'")
         running_jobs = result[0] if result else 0
     except:
@@ -220,7 +220,7 @@ async def get_topics(version: int = None):
 async def get_topic_versions():
     """Get available topic versions"""
     try:
-        from .database import fetch_all
+        from .db import fetch_all
         
         result = await fetch_all("""
             SELECT version, COUNT(*) as topic_count, MIN(created_at) as created_at
@@ -259,13 +259,13 @@ async def start_scrape_job(request: ScrapeJobRequest):
         # Populate default domains for complete audit trail
         if request.config.include_domains is None:
             # Get default preferred domains from TavilyClient
-            from .services.tavily_client import TavilyClient
+            from .external_services.tavily_client import TavilyClient
             temp_client = TavilyClient.__new__(TavilyClient)  # Create without __init__
             request.config.include_domains = temp_client._get_preferred_domains()
             
         if request.config.exclude_domains is None:
             # Get default excluded domains from TavilyClient  
-            from .services.tavily_client import TavilyClient
+            from .external_services.tavily_client import TavilyClient
             temp_client = TavilyClient.__new__(TavilyClient)  # Create without __init__
             request.config.exclude_domains = temp_client._get_excluded_domains()
         
@@ -293,7 +293,7 @@ async def start_scrape_job(request: ScrapeJobRequest):
         logger.info(f"🔧 Job configuration: {request.config.dict()}")
         
         # Create scraping job using Cloud Tasks Manager
-        result = await cloud_tasks_manager.create_scraping_job(request.config, topics)
+        result = await cloud_tasks_manager.create_tavily_scraping_job(request.config, topics)
         
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result["message"])
@@ -315,7 +315,7 @@ async def start_scrape_job(request: ScrapeJobRequest):
 async def get_job_status(job_id: str):
     """Get status of a scraping job"""
     try:
-        result = await cloud_tasks_manager.get_job_status(job_id)
+        result = await cloud_tasks_manager.get_tavily_job_status(job_id)
         
         if "error" in result:
             if result["error"] == "Job not found":
@@ -335,7 +335,7 @@ async def get_job_status(job_id: str):
 async def get_jobs(limit: int = 10, offset: int = 0):
     """Get list of scraping jobs"""
     try:
-        from .database import fetch_all
+        from .db import fetch_all
         
         result = await fetch_all("""
             SELECT id, job_type, status, topics_processed, treatments_created, 
@@ -369,7 +369,7 @@ async def get_jobs(limit: int = 10, offset: int = 0):
 async def get_job_topics(job_id: str):
     """Get the specific topics used for a scraping job"""
     try:
-        from .database import fetch_one
+        from .db import fetch_one
         import json
         
         # Get job info including topics_version and config
@@ -412,7 +412,7 @@ async def get_job_topics(job_id: str):
 async def cancel_job(job_id: str):
     """Cancel a running scraping job"""
     try:
-        result = await cloud_tasks_manager.cancel_job(job_id)
+        result = await cloud_tasks_manager.cancel_tavily_job(job_id)
         
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["message"])
@@ -429,7 +429,7 @@ async def cancel_job(job_id: str):
 async def cleanup_stale_jobs(timeout_hours: int = 2):
     """Clean up jobs that have been running too long (manual/local use)"""
     try:
-        result = await cloud_tasks_manager.cleanup_stale_jobs(timeout_hours)
+        result = await cloud_tasks_manager.cleanup_stale_tavily_jobs(timeout_hours)
         return result
         
     except Exception as e:
@@ -440,8 +440,8 @@ async def cleanup_stale_jobs(timeout_hours: int = 2):
 
 # Internal endpoint for Cloud Tasks to trigger job execution
 @app.post("/internal/execute-job")
-async def execute_job_internal(request: dict):
-    """Internal endpoint called by Cloud Tasks to execute scraping jobs"""
+async def execute_tavily_job_internal(request: dict):
+    """Internal endpoint called by Cloud Tasks to execute Tavily scraping jobs"""
     try:
         job_id = request.get("job_id")
         config_data = request.get("config")
@@ -452,12 +452,12 @@ async def execute_job_internal(request: dict):
         logger.info(f"🚀 Executing job locally: {job_id}")
         
         # Import job runner here to avoid circular imports
-        from .job_runner import JobRunner
+        from .tavily_runner import TavilyRunner
         
         # Create and run job
-        runner = JobRunner()
+        runner = TavilyRunner()
         await runner.initialize()
-        await runner.run_job(job_id)
+        await runner.run_tavily(job_id)
         
         return {"success": True, "message": f"Job {job_id} completed"}
         

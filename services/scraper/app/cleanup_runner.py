@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 # Add the parent directory to Python path
 sys.path.insert(0, '/app')
 
-from app.database import init_db, execute_raw_sql
+from app.db import init_db, execute_raw_sql
 from app.main import load_secrets
 
 # Configure logging
@@ -22,8 +22,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class CleanupJob:
-    """Dedicated cleanup job for scraper maintenance"""
+class CleanupRunner:
+    """Dedicated cleanup runner for scraper maintenance"""
     
     def __init__(self):
         self.job_timeout_hours = int(os.getenv("JOB_TIMEOUT_HOURS", "2"))
@@ -96,7 +96,7 @@ class CleanupJob:
             logger.error(f"❌ Error cleaning up stale jobs: {e}")
             raise
     
-    async def run(self):
+    async def run_cleanup(self):
         """Main cleanup execution"""
         try:
             await self.initialize()
@@ -114,8 +114,8 @@ async def main():
     """Main entry point for cleanup job"""
     logger.info("🚀 Starting scraper cleanup job...")
     
-    cleanup = CleanupJob()
-    cleaned_count = await cleanup.run()
+    cleanup = CleanupRunner()
+    cleaned_count = await cleanup.run_cleanup()
     
     logger.info(f"✅ Cleanup job finished: {cleaned_count} jobs cleaned")
 

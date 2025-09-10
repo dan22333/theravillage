@@ -10,7 +10,7 @@ from typing import Dict, List
 from uuid import uuid4
 from datetime import datetime, timedelta
 
-from ..database import execute_raw_sql, fetch_one
+from ..db import execute_raw_sql, fetch_one
 from ..models.jobs import ScrapeJobConfig, JobStatus
 
 logger = logging.getLogger(__name__)
@@ -45,24 +45,24 @@ class CloudTasksManager:
                 logger.warning(f"⚠️ Cloud Tasks not available: {e}")
                 self.tasks_client = None
     
-    async def create_scraping_job(self, config: ScrapeJobConfig, topics: List[Dict]) -> Dict:
-        """Create a new scraping job via Cloud Tasks"""
+    async def create_tavily_scraping_job(self, config: ScrapeJobConfig, topics: List[Dict]) -> Dict:
+        """Create a new Tavily scraping job via Cloud Tasks"""
         try:
             # Generate unique job ID
             job_id = str(uuid4())
             
             # Create job record in database
-            await self._create_job_record(job_id, config, len(topics))
+            await self._create_tavily_job_record(job_id, config, len(topics))
             
             if self.environment == "production":
                 # Use Cloud Tasks to trigger job execution
-                success = await self._create_cloud_task(job_id, config)
+                success = await self._create_tavily_cloud_task(job_id, config)
                 if not success:
-                    await self._update_job_status(job_id, JobStatus.FAILED, "Failed to create Cloud Task")
+                    await self._update_tavily_job_status(job_id, JobStatus.FAILED, "Failed to create Cloud Task")
                     return {"success": False, "message": "Failed to create Cloud Task", "job_id": job_id}
             else:
-                # Local development fallback - use the same JobRunner logic as production
-                asyncio.create_task(self._call_execute_job_local(job_id))
+                # Local development fallback - use the same TavilyRunner logic as production
+                asyncio.create_task(self._execute_tavily_job_local(job_id))
             
             return {
                 "success": True,
@@ -75,8 +75,8 @@ class CloudTasksManager:
             logger.error(f"❌ Error creating scraping job: {e}")
             return {"success": False, "message": str(e), "job_id": None}
     
-    async def _create_cloud_task(self, job_id: str, config: ScrapeJobConfig) -> bool:
-        """Create Cloud Task to trigger job execution"""
+    async def _create_tavily_cloud_task(self, job_id: str, config: ScrapeJobConfig) -> bool:
+        """Create Cloud Task to trigger Tavily job execution"""
         try:
             if not self.tasks_client:
                 logger.error("❌ Cloud Tasks client not initialized")
@@ -112,8 +112,8 @@ class CloudTasksManager:
             logger.error(f"❌ Error creating Cloud Task: {e}")
             return False
     
-    async def _create_job_record(self, job_id: str, config: ScrapeJobConfig, topic_count: int):
-        """Create initial job record in database"""
+    async def _create_tavily_job_record(self, job_id: str, config: ScrapeJobConfig, topic_count: int):
+        """Create initial Tavily job record in database"""
         import json
         
         await execute_raw_sql("""
@@ -128,13 +128,13 @@ class CloudTasksManager:
         })
         logger.info(f"✅ Created job record: {job_id}")
     
-    async def _call_execute_job_local(self, job_id: str):
-        """Execute job locally using the same logic as production"""
+    async def _execute_tavily_job_local(self, job_id: str):
+        """Execute Tavily job locally using the same logic as production"""
         try:
             logger.info(f"🔄 Executing job locally: {job_id}")
             
             # Call the same function that production uses
-            from ..main import execute_job_internal
+            from ..main import execute_tavily_job_internal
             
             # Create the same request structure that Cloud Tasks would send
             request = {
@@ -142,16 +142,16 @@ class CloudTasksManager:
                 "config": {}  # Config is already in database, not needed here
             }
             
-            await execute_job_internal(request)
+            await execute_tavily_job_internal(request)
             logger.info(f"✅ Local job execution completed: {job_id}")
                 
         except Exception as e:
             logger.error(f"❌ Error executing local job: {e}")
-            await self._update_job_status(job_id, JobStatus.FAILED, f"Local execution failed: {str(e)}")
+            await self._update_tavily_job_status(job_id, JobStatus.FAILED, f"Local execution failed: {str(e)}")
 
     
-    async def _update_job_status(self, job_id: str, status: JobStatus, message: str = None):
-        """Update job status in database"""
+    async def _update_tavily_job_status(self, job_id: str, status: JobStatus, message: str = None):
+        """Update Tavily job status in database"""
         try:
             update_data = {
                 "job_id": job_id,
@@ -176,8 +176,8 @@ class CloudTasksManager:
         except Exception as e:
             logger.error(f"❌ Error updating job status: {e}")
     
-    async def get_job_status(self, job_id: str) -> Dict:
-        """Get job status from database"""
+    async def get_tavily_job_status(self, job_id: str) -> Dict:
+        """Get Tavily job status from database"""
         try:
             result = await fetch_one("""
                 SELECT id, job_type, status, topics_processed, treatments_created, 
@@ -190,7 +190,7 @@ class CloudTasksManager:
                 return {"error": "Job not found"}
             
             # Calculate progress
-            topics_total = len(await self._get_topics_for_job(result.topics_version))
+            topics_total = len(await self._get_topics_for_tavily_job(result.topics_version))
             progress = (result.topics_processed / topics_total * 100) if topics_total > 0 else 0
             
             return {
@@ -203,21 +203,21 @@ class CloudTasksManager:
                 "errors_encountered": result.errors_encountered,
                 "started_at": result.started_at,
                 "completed_at": result.completed_at,
-                "current_activity": self._get_activity_from_status(result.status)
+                "current_activity": self._get_tavily_activity_from_status(result.status)
             }
             
         except Exception as e:
             logger.error(f"❌ Error getting job status: {e}")
             return {"error": str(e)}
     
-    async def _get_topics_for_job(self, topics_version: int) -> List[Dict]:
-        """Get topics for a job version"""
+    async def _get_topics_for_tavily_job(self, topics_version: int) -> List[Dict]:
+        """Get topics for a Tavily job version"""
         from .topic_seeder import TopicSeeder
         seeder = TopicSeeder()
         return await seeder.get_topics_by_version(topics_version)
     
-    def _get_activity_from_status(self, status: str) -> str:
-        """Get current activity description from status"""
+    def _get_tavily_activity_from_status(self, status: str) -> str:
+        """Get current Tavily activity description from status"""
         activity_map = {
             "running": "Scraping web content...",
             "completed": "Completed successfully",
@@ -227,8 +227,8 @@ class CloudTasksManager:
         }
         return activity_map.get(status, "Unknown status")
     
-    async def cancel_job(self, job_id: str) -> Dict:
-        """Cancel a running scraping job"""
+    async def cancel_tavily_job(self, job_id: str) -> Dict:
+        """Cancel a running Tavily scraping job"""
         try:
             # Check if job exists and is running
             result = await fetch_one("""
@@ -259,8 +259,8 @@ class CloudTasksManager:
             logger.error(f"❌ Error cancelling job: {e}")
             return {"success": False, "message": str(e)}
     
-    async def cleanup_stale_jobs(self, timeout_hours: int = 2) -> Dict:
-        """Cancel jobs that have been running too long"""
+    async def cleanup_stale_tavily_jobs(self, timeout_hours: int = 2) -> Dict:
+        """Cancel Tavily jobs that have been running too long"""
         try:
             # Find jobs running longer than timeout
             cutoff_time = datetime.now() - timedelta(hours=timeout_hours)

@@ -31,9 +31,12 @@ class ClientCreateRequest(BaseModel):
 
 
 class ClientInvitationRequest(BaseModel):
-    name: str
-    email: str
-    dob: Optional[date] = None
+    guardian_first_name: str
+    guardian_last_name: str
+    guardian_email: str
+    patient_first_name: str
+    patient_last_name: str
+    patient_dob: Optional[date] = None
 
 
 class ClientInvitationResponse(BaseModel):

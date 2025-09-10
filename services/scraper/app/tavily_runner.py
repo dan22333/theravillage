@@ -13,9 +13,9 @@ from typing import Dict
 # Add the parent directory to Python path
 sys.path.insert(0, '/app')
 
-from app.database import init_db, execute_raw_sql, fetch_one, fetch_all
-from app.services.topic_seeder import TopicSeeder
-from app.services.tavily_client import TavilyClient
+from app.db import init_db, execute_raw_sql, fetch_one, fetch_all
+from app.external_services.topic_seeder import TopicSeeder
+from app.external_services.tavily_client import TavilyClient
 from app.main import load_secrets, settings
 
 # Configure logging
@@ -25,8 +25,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class JobRunner:
-    """Runs scraping jobs in isolated Cloud Run Job instances"""
+class TavilyRunner:
+    """Runs Tavily scraping jobs in isolated Cloud Run Job instances"""
     
     def __init__(self):
         self.tavily_client = None
@@ -53,13 +53,13 @@ class JobRunner:
             logger.error(f"❌ Failed to initialize job runner: {e}")
             raise
     
-    async def run_job(self, job_id: str):
-        """Run a specific scraping job"""
+    async def run_tavily(self, job_id: str):
+        """Run a specific Tavily scraping job"""
         try:
             logger.info(f"🔄 Starting scraping job: {job_id}")
             
             # Get job details from database
-            job_data = await self._get_job_data(job_id)
+            job_data = await self._get_tavily_job_data(job_id)
             if not job_data:
                 logger.error(f"❌ Job not found: {job_id}")
                 return
@@ -67,7 +67,7 @@ class JobRunner:
             # Get topics for this job
             topics = await self.topic_seeder.get_topics_by_version(job_data["topics_version"])
             if not topics:
-                await self._update_job_status(job_id, "failed", "No topics found for version")
+                await self._update_tavily_job_status(job_id, "failed", "No topics found for version")
                 return
             
             logger.info(f"📋 Processing {len(topics)} topics for job {job_id}")
@@ -170,11 +170,11 @@ class JobRunner:
             
         except Exception as e:
             logger.error(f"❌ Fatal error in scraping job {job_id}: {e}")
-            await self._update_job_status(job_id, "failed", str(e))
+            await self._update_tavily_job_status(job_id, "failed", str(e))
     
     
-    async def _get_job_data(self, job_id: str) -> Dict:
-        """Get job configuration from database"""
+    async def _get_tavily_job_data(self, job_id: str) -> Dict:
+        """Get Tavily job configuration from database"""
         result = await fetch_one("""
             SELECT job_type, topics_version, job_config
             FROM scrape_jobs 
@@ -189,8 +189,8 @@ class JobRunner:
             }
         return None
     
-    async def _update_job_status(self, job_id: str, status: str, message: str = None):
-        """Update job status in database"""
+    async def _update_tavily_job_status(self, job_id: str, status: str, message: str = None):
+        """Update Tavily job status in database"""
         try:
             await execute_raw_sql("""
                 UPDATE scrape_jobs 
@@ -213,15 +213,15 @@ class JobRunner:
 async def main():
     """Main entry point for job runner"""
     if len(sys.argv) < 2:
-        logger.error("❌ Usage: python -m app.job_runner <job_id>")
+        logger.error("❌ Usage: python -m app.tavily_runner <job_id>")
         sys.exit(1)
     
     job_id = sys.argv[1]
     logger.info(f"🎯 Starting job runner for job: {job_id}")
     
-    runner = JobRunner()
+    runner = TavilyRunner()
     await runner.initialize()
-    await runner.run_job(job_id)
+    await runner.run_tavily(job_id)
     
     logger.info(f"✅ Job runner completed for job: {job_id}")
 

@@ -5,7 +5,7 @@ import logging
 from typing import List, Dict
 from datetime import datetime
 from sqlalchemy import text
-from ..database import get_db
+from ..db import get_db
 from ..models.topics import TreatmentTopic
 
 logger = logging.getLogger(__name__)

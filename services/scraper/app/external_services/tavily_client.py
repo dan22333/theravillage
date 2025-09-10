@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from ..models.tavily import TavilyQuery, TavilyResponse, TavilyResult, TavilyResponseRecord, TavilyResultRecord
-from ..database import get_db
+from ..db import get_db
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)

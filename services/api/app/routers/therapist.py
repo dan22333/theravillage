@@ -5,7 +5,7 @@ from typing import List
 from dotenv import load_dotenv
 from dateutil.parser import parse as parse_datetime
 
-from ..timezone_utils import parse_frontend_datetime, to_utc_for_storage
+from ..timezone_utils import parse_frontend_datetime, to_utc_for_storage, from_utc_to_app_timezone, now_in_app_timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -312,7 +312,7 @@ async def invite_client(
     ctx = Depends(require_therapist),
     db: AsyncSession = Depends(get_db),
 ):
-    print(f"🔍 INVITE DEBUG: Starting invite process for {request.email}")
+    print(f"🔍 INVITE DEBUG: Starting invite process for {request.guardian_email}")
     print(f"🔍 INVITE DEBUG: Therapist ID: {ctx.user_id}")
     print(f"🔍 INVITE DEBUG: Request data: {request}")
     
@@ -328,17 +328,23 @@ async def invite_client(
             text(
                 """
                 INSERT INTO pending_clients (
-                    therapist_id, email, name, dob, invitation_token, expires_at
+                    therapist_id, email, name, dob, guardian_first_name, guardian_last_name, 
+                    patient_first_name, patient_last_name, invitation_token, expires_at
                 ) VALUES (
-                    :therapist_id, :email, :name, :dob, :invitation_token, :expires_at
+                    :therapist_id, :email, :name, :dob, :guardian_first_name, :guardian_last_name,
+                    :patient_first_name, :patient_last_name, :invitation_token, :expires_at
                 ) RETURNING id
                 """
             ),
             {
                 "therapist_id": ctx.user_id,
-                "email": request.email,
-                "name": request.name,
-                "dob": request.dob,
+                "email": request.guardian_email,
+                "name": f"{request.guardian_first_name} {request.guardian_last_name}",
+                "dob": request.patient_dob,
+                "guardian_first_name": request.guardian_first_name,
+                "guardian_last_name": request.guardian_last_name,
+                "patient_first_name": request.patient_first_name,
+                "patient_last_name": request.patient_last_name,
                 "invitation_token": invitation_token,
                 "expires_at": expires_at,
             },
@@ -360,8 +366,9 @@ async def invite_client(
                 frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
                 
                 cloud_function_data = {
-                    "clientEmail": request.email,
-                    "clientName": request.name,
+                    "clientEmail": request.guardian_email,
+                    "clientName": f"{request.guardian_first_name} {request.guardian_last_name}",
+                    "patientName": f"{request.patient_first_name} {request.patient_last_name}",
                     "therapistName": therapist_name,
                     "invitationToken": invitation_token,
                     "frontendUrl": frontend_url
@@ -379,7 +386,7 @@ async def invite_client(
                 if response.status_code != 200:
                     print(f"⚠️ Cloud Function error: {response.status_code} - {response.text}")
                 else:
-                    print(f"✅ Email sent successfully to {request.email}")
+                    print(f"✅ Email sent successfully to {request.guardian_email}")
         except Exception as e:
             print(f"⚠️ Failed to call Cloud Function: {e}")
             print(f"🔍 INVITE DEBUG: Cloud Function exception details: {type(e).__name__}: {str(e)}")
@@ -389,7 +396,7 @@ async def invite_client(
         await db.commit()
         print(f"🔍 INVITE DEBUG: Transaction committed successfully")
         
-        return ClientInvitationResponse(success=True, message=f"Invitation sent to {request.email}", invitation_id=invitation_id)
+        return ClientInvitationResponse(success=True, message=f"Invitation sent to {request.guardian_email}", invitation_id=invitation_id)
     except Exception as e:
         print(f"❌ INVITE ERROR: Exception occurred: {type(e).__name__}: {str(e)}")
         print(f"❌ INVITE ERROR: Exception details: {e}")
@@ -552,7 +559,6 @@ async def get_therapist_appointments(
     start_date: date | None = None,
     end_date: date | None = None,
 ):
-    from .timezone_utils import from_utc_to_app_timezone
     
     query = (
         """
@@ -589,7 +595,6 @@ async def get_therapist_appointments(
 
 @router.get("/therapist/appointments/today")
 async def get_today_appointments(ctx = Depends(require_therapist), db: AsyncSession = Depends(get_db)):
-    from .timezone_utils import from_utc_to_app_timezone, now_in_app_timezone
     
     today = now_in_app_timezone().date()
     result = await db.execute(
@@ -882,6 +887,22 @@ async def cancel_appointment(
             UPDATE appointments 
             SET status = 'cancelled', updated_at = NOW()
             WHERE id = :appointment_id
+        """), {"appointment_id": appointment_id})
+
+        # Also update the related scheduling request status to cancelled
+        await db.execute(text("""
+            UPDATE scheduling_requests 
+            SET status = 'cancelled', 
+                updated_at = NOW(),
+                responded_at = NOW(),
+                therapist_response = 'Appointment cancelled by therapist',
+                cancelled_by = 'therapist',
+                cancellation_reason = 'Appointment cancelled by therapist'
+            WHERE id = (
+                SELECT scheduling_request_id 
+                FROM appointments 
+                WHERE id = :appointment_id
+            )
         """), {"appointment_id": appointment_id})
 
         # Release the calendar slot if it was linked to this appointment
@@ -1620,5 +1641,85 @@ async def delete_session(
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
 
+
+@router.get("/therapist/recent-requests")
+async def get_recent_requests(
+    ctx = Depends(require_therapist),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get recent scheduling requests for the therapist"""
+    try:
+        therapist_id = ctx.user_id
+        print(f"DEBUG: therapist_id = {therapist_id}")
+        
+        # Get the 20 most recent scheduling requests for this therapist
+        # Order by most recent first, with approved requests first, then cancelled, declined, counter_proposed, and pending
+        result = await db.execute(
+            text("""
+                SELECT 
+                    sr.id,
+                    sr.client_id,
+                    u.name as client_name,
+                    sr.requested_date,
+                    sr.requested_start_time,
+                    sr.requested_end_time,
+                    sr.status,
+                    sr.therapist_response,
+                    sr.responded_at,
+                    sr.created_at,
+                    sr.updated_at
+                FROM scheduling_requests sr
+                JOIN users u ON sr.client_id = u.id
+                WHERE sr.therapist_id = :therapist_id
+                ORDER BY 
+                    CASE 
+                        WHEN sr.status = 'approved' THEN 1
+                        WHEN sr.status = 'cancelled' THEN 2
+                        WHEN sr.status = 'declined' THEN 3
+                        WHEN sr.status = 'counter_proposed' THEN 4
+                        WHEN sr.status = 'pending' THEN 5
+                        ELSE 6
+                    END,
+                    sr.created_at DESC
+                LIMIT 20
+            """),
+            {"therapist_id": therapist_id}
+        )
+        
+        requests = result.fetchall()
+        print(f"DEBUG: Found {len(requests)} requests")
+        
+        # Convert to list of dictionaries
+        requests_list = []
+        for request in requests:
+            # Combine date and time into a datetime string
+            requested_datetime = None
+            if request.requested_date and request.requested_start_time:
+                requested_datetime = datetime.combine(request.requested_date, request.requested_start_time).isoformat()
+            
+            requests_list.append({
+                "id": request.id,
+                "client_id": request.client_id,
+                "client_name": request.client_name,
+                "requested_time": requested_datetime,
+                "preferred_time": requested_datetime,  # Use same value for now
+                "duration_minutes": 60,  # Default duration, could calculate from end_time - start_time
+                "status": request.status,
+                "therapist_response": request.therapist_response,
+                "responded_at": request.responded_at.isoformat() if request.responded_at else None,
+                "created_at": request.created_at.isoformat() if request.created_at else None,
+                "updated_at": request.updated_at.isoformat() if request.updated_at else None
+            })
+        
+        return {
+            "requests": requests_list,
+            "total": len(requests_list)
+        }
+        
+    except Exception as e:
+        print(f"DEBUG: Error in get_recent_requests: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to fetch recent requests: {str(e)}")
 
 

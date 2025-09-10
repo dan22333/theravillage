@@ -614,15 +614,24 @@ async def get_pending_requests(
             ORDER BY sr.created_at DESC
         """)
     else:  # client
-        # Get recent requests excluding old processed ones (last 30 days)
+        # Get recent requests with approved ones first, then by most recent
         query = text("""
             SELECT sr.*, u.name as therapist_name, u.email as therapist_email
             FROM scheduling_requests sr
             JOIN users u ON sr.therapist_id = u.id
             WHERE sr.client_id = :user_id
             AND sr.created_at >= NOW() - INTERVAL '30 days'
-            ORDER BY sr.created_at DESC
-            LIMIT 10
+            ORDER BY 
+                CASE 
+                    WHEN sr.status = 'approved' THEN 1
+                    WHEN sr.status = 'cancelled' THEN 2
+                    WHEN sr.status = 'declined' THEN 3
+                    WHEN sr.status = 'counter_proposed' THEN 4
+                    WHEN sr.status = 'pending' THEN 5
+                    ELSE 6
+                END,
+                sr.created_at DESC
+            LIMIT 20
         """)
     
     result = await db.execute(query, {"user_id": user_id})
@@ -852,7 +861,6 @@ async def respond_to_scheduling_request(
             print(f"🔄 BOOKING: No existing slots found, creating slots automatically")
             
             # Calculate 15-minute slots needed
-            from datetime import datetime, timedelta
             start_dt = datetime.strptime(str(request_row.requested_start_time), "%H:%M:%S")
             end_dt = datetime.strptime(str(request_row.requested_end_time), "%H:%M:%S")
             

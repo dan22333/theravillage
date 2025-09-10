@@ -7,6 +7,7 @@ import json
 from ..db import get_db
 from ..security import get_current_user, require_client, AuthedContext
 from ..schemas import ClientProfileUpdateRequest
+from ..timezone_utils import from_utc_to_app_timezone
 
 router = APIRouter()
 
@@ -142,7 +143,6 @@ async def get_client_appointments(
 ):
     """Get all appointments for the current client"""
     try:
-        from .timezone_utils import from_utc_to_app_timezone
         
         query = text("""
             SELECT a.id, a.start_ts, a.end_ts, a.status, a.location,

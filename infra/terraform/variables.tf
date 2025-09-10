@@ -49,5 +49,12 @@ variable "api_url" {
   default     = "https://tv-api-326430627435.us-central1.run.app"
 }
 
+# Admin Configuration
+variable "admin_firebase_uid" {
+  type        = string
+  description = "Firebase UID for the admin user (Daniel Nurieli)"
+  sensitive   = true
+}
+
 # Database password will be set manually after infrastructure creation
 # This prevents storing passwords in Terraform state or variables

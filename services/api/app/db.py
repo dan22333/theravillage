@@ -323,6 +323,10 @@ async def init_db():
                 email VARCHAR(255) NOT NULL,
                 name VARCHAR(255) NOT NULL,
                 dob DATE,
+                guardian_first_name VARCHAR(255),
+                guardian_last_name VARCHAR(255),
+                patient_first_name VARCHAR(255),
+                patient_last_name VARCHAR(255),
                 address JSONB,
                 school VARCHAR(255),
                 diagnosis_codes JSONB,
@@ -983,6 +987,26 @@ async def init_db():
             )
         """))
 
+        # Migration: Ensure 'declined' status is properly supported
+        await conn.execute(text("""
+            DO $$ 
+            BEGIN
+                -- Drop the old constraint if it exists
+                IF EXISTS (
+                    SELECT 1 FROM pg_constraint 
+                    WHERE conname = 'scheduling_requests_status_check'
+                ) THEN
+                    ALTER TABLE scheduling_requests 
+                    DROP CONSTRAINT scheduling_requests_status_check;
+                END IF;
+                
+                -- Add the constraint with 'declined' status
+                ALTER TABLE scheduling_requests 
+                ADD CONSTRAINT scheduling_requests_status_check 
+                CHECK (status IN ('pending', 'approved', 'declined', 'counter_proposed', 'cancelled'));
+            END $$;
+        """))
+
         # 3. Calendar Notifications (for scheduling events)
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS calendar_notifications (
@@ -1062,19 +1086,25 @@ async def init_db():
                 settings_json = '{"environment": "production"}'
         """))
         
-        await conn.execute(text("""
-            INSERT INTO users (org_id, name, email, role, status, firebase_uid)
-            VALUES (1, 'Daniel Nurieli', 'daniel.nurieli@gmail.com', 'admin', 'active', 'ktSdASS8QEMmIZb0C2MApLpFfKQ2')
-            ON CONFLICT (email) DO UPDATE SET 
-                role = 'admin', 
-                status = 'active',
-                firebase_uid = 'ktSdASS8QEMmIZb0C2MApLpFfKQ2'
-        """))
+        # Get admin Firebase UID from environment or Secret Manager
+        admin_firebase_uid = os.getenv("ADMIN_FIREBASE_UID")
+        if not admin_firebase_uid:
+            admin_firebase_uid = await get_secret("ADMIN_FIREBASE_UID")
+        
+        if admin_firebase_uid:
+            await conn.execute(text("""
+                INSERT INTO users (org_id, name, email, role, status, firebase_uid)
+                VALUES (1, 'Daniel Nurieli', 'daniel.nurieli@gmail.com', 'admin', 'active', :firebase_uid)
+                ON CONFLICT (email) DO UPDATE SET 
+                    role = 'admin', 
+                    status = 'active',
+                    firebase_uid = :firebase_uid
+            """), {"firebase_uid": admin_firebase_uid})
         
         await conn.commit()
         
         # TEMPORARY MIGRATION CODE - Add new columns to existing tables
-        print("🔄 Running temporary migrations for scheduling_requests table...")
+        print("🔄 Running temporary migrations for existing tables...")
         try:
             # Add cancelled_by column if it doesn't exist
             await conn.execute(text("""
@@ -1100,6 +1130,59 @@ async def init_db():
                         ALTER TABLE scheduling_requests 
                         ADD COLUMN cancellation_reason TEXT;
                         RAISE NOTICE 'Added cancellation_reason column to scheduling_requests';
+                    END IF;
+                END $$;
+            """))
+            
+            # Add guardian and patient name columns to pending_clients if they don't exist
+            await conn.execute(text("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name = 'pending_clients' 
+                                  AND column_name = 'guardian_first_name') THEN
+                        ALTER TABLE pending_clients 
+                        ADD COLUMN guardian_first_name VARCHAR(255);
+                        RAISE NOTICE 'Added guardian_first_name column to pending_clients';
+                    END IF;
+                END $$;
+            """))
+            
+            await conn.execute(text("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name = 'pending_clients' 
+                                  AND column_name = 'guardian_last_name') THEN
+                        ALTER TABLE pending_clients 
+                        ADD COLUMN guardian_last_name VARCHAR(255);
+                        RAISE NOTICE 'Added guardian_last_name column to pending_clients';
+                    END IF;
+                END $$;
+            """))
+            
+            await conn.execute(text("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name = 'pending_clients' 
+                                  AND column_name = 'patient_first_name') THEN
+                        ALTER TABLE pending_clients 
+                        ADD COLUMN patient_first_name VARCHAR(255);
+                        RAISE NOTICE 'Added patient_first_name column to pending_clients';
+                    END IF;
+                END $$;
+            """))
+            
+            await conn.execute(text("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name = 'pending_clients' 
+                                  AND column_name = 'patient_last_name') THEN
+                        ALTER TABLE pending_clients 
+                        ADD COLUMN patient_last_name VARCHAR(255);
+                        RAISE NOTICE 'Added patient_last_name column to pending_clients';
                     END IF;
                 END $$;
             """))

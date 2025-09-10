@@ -190,11 +190,11 @@ db-info:
 
 # Clean up stale scraper jobs (local)
 cleanup-jobs:
-	docker-compose --env-file env.local exec tv-scraper poetry run python -m app.cleanup_job
+	docker-compose --env-file env.local exec tv-scraper poetry run python -m app.cleanup_runner
 
 # Clean up stale scraper jobs with dry run (see what would be cleaned)
 cleanup-jobs-dry:
-	docker-compose --env-file env.local exec -e DRY_RUN=true tv-scraper poetry run python -m app.cleanup_job
+	docker-compose --env-file env.local exec -e DRY_RUN=true tv-scraper poetry run python -m app.cleanup_runner
 
 # Manual cleanup via API endpoint (local development)
 cleanup-jobs-api:
