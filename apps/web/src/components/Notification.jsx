@@ -117,7 +117,7 @@ const NotificationItem = ({ notification, onRemove }) => {
         {getIcon()}
       </div>
       <div className="notification-content">
-        <p>{notification.message}</p>
+        <p>{typeof notification.message === 'string' ? notification.message : JSON.stringify(notification.message)}</p>
       </div>
       <button className="notification-close" onClick={handleClose}>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

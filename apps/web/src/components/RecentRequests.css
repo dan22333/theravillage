@@ -1,7 +1,7 @@
 .recent-requests-widget {
   background: white;
   border-radius: 12px;
-  padding: 20px;
+  padding: 16px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   border: 1px solid #E2E8F0;
 }
@@ -9,9 +9,9 @@
 .recent-requests-widget h2 {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 16px 0;
-  font-size: 18px;
+  gap: 6px;
+  margin: 0 0 12px 0;
+  font-size: 16px;
   font-weight: 600;
   color: #343A40;
 }
@@ -21,15 +21,15 @@
 }
 
 .requests-list {
-  max-height: 400px;
+  max-height: 350px;
   overflow-y: auto;
 }
 
 .request-item {
   border: 1px solid #E2E8F0;
-  border-radius: 8px;
-  padding: 12px;
-  margin-bottom: 8px;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 6px;
   background: #FAFAFA;
   transition: all 0.2s ease;
 }
@@ -67,41 +67,41 @@
 .request-info {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .request-client {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #343A40;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .recent-badge {
-  font-size: 10px;
+  font-size: 9px;
   color: #20B2AA;
   font-weight: 500;
 }
 
 .request-time {
-  font-size: 12px;
+  font-size: 11px;
   color: #6C757D;
 }
 
 .request-details {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 4px;
+  gap: 2px;
+  margin-top: 2px;
 }
 
 .status-badge {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
   display: inline-block;
   width: fit-content;
 }
@@ -132,26 +132,26 @@
 }
 
 .therapist-response {
-  font-size: 11px;
+  font-size: 10px;
   color: #6C757D;
   font-style: italic;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .show-more-section {
   text-align: center;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 2px solid #E2E8F0;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #E2E8F0;
 }
 
 .show-more-btn {
   background: #20B2AA;
   color: white;
   border: none;
-  border-radius: 6px;
-  padding: 8px 16px;
-  font-size: 12px;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -199,6 +199,226 @@
 .empty-state p {
   margin: 0;
   font-size: 14px;
+}
+
+/* Request Actions */
+.request-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.cancel-btn {
+  background: #DC3545;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 9px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.cancel-btn:hover {
+  background: #C82333;
+  transform: translateY(-1px);
+}
+
+.view-btn {
+  background: #6C757D;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 9px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.view-btn:hover {
+  background: #5A6268;
+  transform: translateY(-1px);
+}
+
+.approve-btn {
+  background: #28A745;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 9px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.approve-btn:hover {
+  background: #218838;
+  transform: translateY(-1px);
+}
+
+.decline-btn {
+  background: #DC3545;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 9px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.decline-btn:hover {
+  background: #C82333;
+  transform: translateY(-1px);
+}
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+
+.modal-content h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #343A40;
+}
+
+.modal-content p {
+  margin: 0 0 16px 0;
+  color: #6C757D;
+  line-height: 1.5;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #343A40;
+}
+
+.form-group textarea {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #E2E8F0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color 0.2s ease;
+}
+
+.form-group textarea:focus {
+  outline: none;
+  border-color: #20B2AA;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary {
+  background: #6C757D;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background: #5A6268;
+}
+
+.btn-danger {
+  background: #DC3545;
+  color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #C82333;
+}
+
+.btn-danger:disabled {
+  background: #E2E8F0;
+  color: #6C757D;
+  cursor: not-allowed;
+}
+
+/* Request Details Modal */
+.request-details-modal {
+  margin: 16px 0;
+}
+
+.detail-row {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-row strong {
+  color: #343A40;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.client-message-detail,
+.therapist-response-detail,
+.cancellation-reason-detail {
+  background: #F8F9FA;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 3px solid #20B2AA;
+  font-style: italic;
+  color: #495057;
+  margin-top: 4px;
+}
+
+.cancellation-reason-detail {
+  border-left-color: #DC3545;
+  background: #FEF2F2;
 }
 
 @keyframes spin {

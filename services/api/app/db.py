@@ -1070,7 +1070,7 @@ async def init_db():
             -- Add new constraint with all notification types
             ALTER TABLE calendar_notifications 
             ADD CONSTRAINT calendar_notifications_type_check 
-            CHECK (type IN ('scheduling_request', 'request_approved', 'request_declined', 'counter_proposal', 'meeting_reminder', 'appointment_scheduled', 'appointment_updated', 'appointment_cancelled', 'appointment_rescheduled'));
+            CHECK (type IN ('scheduling_request', 'request_approved', 'request_declined', 'request_cancelled', 'counter_proposal', 'meeting_reminder', 'appointment_scheduled', 'appointment_updated', 'appointment_cancelled', 'appointment_rescheduled'));
         END $$;
         """))
 

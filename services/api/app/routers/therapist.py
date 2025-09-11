@@ -21,6 +21,7 @@ from ..schemas import (
     ClientInvitationRequest,
     ClientInvitationResponse,
     AppointmentCreateRequest,
+    AppointmentCancellationRequest,
     TherapistAgencyAssignmentRequest,
 )
 
@@ -865,11 +866,15 @@ async def create_appointment(request: AppointmentCreateRequest, ctx = Depends(re
 @router.post("/therapist/appointments/{appointment_id}/cancel")
 async def cancel_appointment(
     appointment_id: int,
+    request: AppointmentCancellationRequest,
     ctx = Depends(require_therapist),
     db: AsyncSession = Depends(get_db)
 ):
     """Cancel an appointment and notify the client"""
     try:
+        print(f"🔄 CANCELLATION DEBUG: Cancelling appointment {appointment_id}")
+        print(f"🔄 CANCELLATION DEBUG: Cancellation reason: '{request.cancellation_reason}'")
+        
         # Get appointment details
         result = await db.execute(text("""
             SELECT a.client_id, a.start_ts, a.end_ts, u.name as client_name
@@ -895,7 +900,7 @@ async def cancel_appointment(
             SET status = 'cancelled', 
                 updated_at = NOW(),
                 responded_at = NOW(),
-                therapist_response = 'Appointment cancelled by therapist',
+                therapist_response = :cancellation_reason,
                 cancelled_by = 'therapist',
                 cancellation_reason = 'Appointment cancelled by therapist'
             WHERE id = (
@@ -903,7 +908,9 @@ async def cancel_appointment(
                 FROM appointments 
                 WHERE id = :appointment_id
             )
-        """), {"appointment_id": appointment_id})
+        """), {"appointment_id": appointment_id, "cancellation_reason": request.cancellation_reason})
+
+        print(f"🔄 CANCELLATION DEBUG: Updated scheduling_requests with reason: '{request.cancellation_reason}'")
 
         # Release the calendar slot if it was linked to this appointment
         # Release ALL calendar slots in the appointment time range
@@ -1671,16 +1678,7 @@ async def get_recent_requests(
                 FROM scheduling_requests sr
                 JOIN users u ON sr.client_id = u.id
                 WHERE sr.therapist_id = :therapist_id
-                ORDER BY 
-                    CASE 
-                        WHEN sr.status = 'approved' THEN 1
-                        WHEN sr.status = 'cancelled' THEN 2
-                        WHEN sr.status = 'declined' THEN 3
-                        WHEN sr.status = 'counter_proposed' THEN 4
-                        WHEN sr.status = 'pending' THEN 5
-                        ELSE 6
-                    END,
-                    sr.created_at DESC
+                ORDER BY sr.created_at DESC
                 LIMIT 20
             """),
             {"therapist_id": therapist_id}
@@ -1702,6 +1700,9 @@ async def get_recent_requests(
                 "client_id": request.client_id,
                 "client_name": request.client_name,
                 "requested_time": requested_datetime,
+                "requested_date": request.requested_date.isoformat() if request.requested_date else None,
+                "requested_start_time": request.requested_start_time.isoformat() if request.requested_start_time else None,
+                "requested_end_time": request.requested_end_time.isoformat() if request.requested_end_time else None,
                 "preferred_time": requested_datetime,  # Use same value for now
                 "duration_minutes": 60,  # Default duration, could calculate from end_time - start_time
                 "status": request.status,

@@ -52,7 +52,14 @@ class ClientProfileUpdateRequest(BaseModel):
     payer_id: Optional[str] = None
     auth_lims: Optional[dict] = None
     goals: Optional[List[str]] = None
-    initial_analysis: Optional[str] = None
+
+
+class AppointmentCancellationRequest(BaseModel):
+    cancellation_reason: str
+
+
+class ClientCancellationRequest(BaseModel):
+    reason: str
 
 
 # Appointments / Sessions / Notes

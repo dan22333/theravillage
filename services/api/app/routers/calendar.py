@@ -12,6 +12,7 @@ import json
 from ..db import get_db
 from ..security import get_current_user, require_therapist, require_client, AuthedContext
 from ..timezone_utils import combine_date_time_in_app_timezone, to_utc_for_storage
+from ..schemas import ClientCancellationRequest
 
 router = APIRouter()
 
@@ -647,6 +648,7 @@ async def get_pending_requests(
 @router.post("/scheduling-requests/{request_id}/cancel")
 async def cancel_scheduling_request(
     request_id: int,
+    request_data: ClientCancellationRequest,
     current_user: AuthedContext = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -683,15 +685,18 @@ async def cancel_scheduling_request(
     print(f"📋 CLIENT CANCELLATION: Request {request_id} being cancelled by client {client_id}")
     
     # Update request status to cancelled with cancellation tracking
+    client_reason = request_data.reason
     update_query = text("""
         UPDATE scheduling_requests 
         SET status = 'cancelled', 
             updated_at = NOW(),
             responded_at = NOW(),
-            therapist_response = 'Cancelled by client'
+            therapist_response = 'Appointment cancelled by patient',
+            cancelled_by = 'client',
+            cancellation_reason = :client_reason
         WHERE id = :request_id
     """)
-    await db.execute(update_query, {"request_id": request_id})
+    await db.execute(update_query, {"request_id": request_id, "client_reason": client_reason})
     
     # Create notification for therapist
     await create_notification(

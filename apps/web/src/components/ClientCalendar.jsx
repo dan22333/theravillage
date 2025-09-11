@@ -386,8 +386,9 @@ export const ClientSchedulingRequests = ({ refreshTrigger }) => {
 
   // Cancel a scheduling request
   const cancelRequest = async (requestId) => {
-    if (!confirm('Are you sure you want to cancel this meeting request?')) {
-      return;
+    const reason = prompt('Please provide a reason for cancelling this meeting request (optional):');
+    if (reason === null) {
+      return; // User cancelled the prompt
     }
 
     setCancellingRequestId(requestId);
@@ -407,7 +408,10 @@ export const ClientSchedulingRequests = ({ refreshTrigger }) => {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({
+          reason: reason || 'No reason provided'
+        })
       });
 
       if (response.ok) {
@@ -482,9 +486,21 @@ export const ClientSchedulingRequests = ({ refreshTrigger }) => {
                     <em>Your message: "{request.client_message}"</em>
                   </div>
                 )}
-                {request.therapist_response && (
+                {request.therapist_response && request.status !== 'cancelled' && (
                   <div className="therapist-response">
                     <strong>Therapist response:</strong> "{request.therapist_response}"
+                  </div>
+                )}
+                {request.status === 'cancelled' && (
+                  <div className="cancellation-reason">
+                    <strong>Reason for cancellation:</strong> 
+                    {request.cancelled_by === 'therapist' ? (
+                      <span>{request.therapist_response || 'No reason provided'}</span>
+                    ) : request.cancelled_by === 'client' ? (
+                      <span>{request.cancellation_reason || 'No reason provided'}</span>
+                    ) : (
+                      <span>{request.cancellation_reason || request.therapist_response || 'No reason provided'}</span>
+                    )}
                   </div>
                 )}
                 <div className="request-status">
